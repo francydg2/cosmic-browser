@@ -16,7 +16,7 @@ jobs:
             qt-arch: linux_gcc_64
           - os: windows-latest
             qt-host: windows
-            qt-arch: win64_msvc2022_64
+            qt-arch: win64_msvc2019_64
           - os: macos-latest
             qt-host: mac
             qt-arch: clang_64
@@ -42,7 +42,9 @@ jobs:
       - name: Install Qt (with WebEngine)
         uses: jurplel/install-qt-action@v4
         with:
-          version: "6.8.3"
+          # 6.7.3 is the newest Qt shipping prebuilt WebEngine binaries;
+          # 6.8.0+ removed them from the OSS online repository.
+          version: "6.7.3"
           host: ${{ matrix.qt-host }}
           arch: ${{ matrix.qt-arch }}
           modules: qtwebengine
