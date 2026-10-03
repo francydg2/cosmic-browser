@@ -13,7 +13,7 @@ jobs:
         include:
           - os: ubuntu-24.04
             qt-host: linux
-            qt-arch: gcc_64
+            qt-arch: linux_gcc_64
           - os: windows-latest
             qt-host: windows
             qt-arch: win64_msvc2022_64
@@ -42,7 +42,7 @@ jobs:
       - name: Install Qt (with WebEngine)
         uses: jurplel/install-qt-action@v4
         with:
-          version: "6.8.*"
+          version: "6.8.3"
           host: ${{ matrix.qt-host }}
           arch: ${{ matrix.qt-arch }}
           modules: qtwebengine
