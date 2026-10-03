@@ -1,0 +1,89 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            qt-host: linux
+            qt-arch: gcc_64
+          - os: windows-latest
+            qt-host: windows
+            qt-arch: win64_msvc2022_64
+          - os: macos-latest
+            qt-host: mac
+            qt-arch: clang_64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ninja and OpenSSL (Ubuntu)
+        if: matrix.qt-host == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libssl-dev libgl1-mesa-dev
+
+      - name: Install Ninja and OpenSSL (macOS)
+        if: matrix.qt-host == 'mac'
+        run: |
+          brew install ninja openssl@3
+          echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+
+      - name: Install Ninja and OpenSSL (Windows)
+        if: matrix.qt-host == 'windows'
+        run: choco install ninja openssl -y
+
+      - name: Install Qt (with WebEngine)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.*"
+          host: ${{ matrix.qt-host }}
+          arch: ${{ matrix.qt-arch }}
+          modules: qtwebengine
+          cache: true
+
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/dist
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Install tree
+        run: cmake --install build
+
+      - name: Deploy Qt runtime (Windows)
+        if: matrix.qt-host == 'windows'
+        shell: pwsh
+        run: windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw ${{ github.workspace }}/dist/bin/cosmic.exe
+
+      - name: Deploy Qt runtime (macOS)
+        if: matrix.qt-host == 'mac'
+        run: macdeployqt ${{ github.workspace }}/dist/Cosmic.app
+
+      - name: Pack artifact (Windows)
+        if: matrix.qt-host == 'windows'
+        shell: pwsh
+        run: Compress-Archive -Path dist/* -DestinationPath cosmic-alpha-windows.zip
+
+      - name: Pack artifact (macOS)
+        if: matrix.qt-host == 'mac'
+        run: ditto -c -k --sequesterRsrc dist cosmic-alpha-macos.zip
+
+      - name: Pack artifact (Linux)
+        if: matrix.qt-host == 'linux'
+        run: tar -czf cosmic-alpha-linux.tar.gz -C dist .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cosmic-alpha-${{ matrix.qt-host }}
+          path: cosmic-alpha-*.*

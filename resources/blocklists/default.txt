@@ -1,0 +1,64 @@
+# Nebula default request-blocking list (Phase 2)
+# One host per line: the exact host and all its subdomains are blocked
+# at REQUEST level (the network fetch never happens). Cosmetic/DOM
+# filtering is not possible with Qt WebEngine — see docs/ARCHITECTURE.md.
+#
+# Your own rules go in ~/.config/nebula/blocklist.txt (same format).
+# Disable everything in Settings → Privacy.
+
+# --- advertising networks -----------------------------------------------
+doubleclick.net
+googlesyndication.com
+googleadservices.com
+adnxs.com
+pubmatic.com
+rubiconproject.com
+openx.net
+casalemedia.com
+criteo.com
+criteo.net
+taboola.com
+outbrain.com
+zedo.com
+adform.net
+serving-sys.com
+moatads.com
+amazon-adsystem.com
+media.net
+revcontent.com
+mgid.com
+propellerads.com
+adcolony.com
+unityads.unity3d.com
+applovin.com
+inmobi.com
+
+# --- analytics / tracking ----------------------------------------------
+google-analytics.com
+googletagmanager.com
+scorecardresearch.com
+quantserve.com
+mixpanel.com
+segment.io
+amplitude.com
+hotjar.com
+fullstory.com
+heap.io
+mouseflow.com
+branch.io
+appsflyer.com
+adjust.com
+kochava.com
+crazyegg.com
+
+# --- social pixels ------------------------------------------------------
+connect.facebook.net
+facebook.net
+platform.twitter.com
+snap.licdn.com
+analytics.tiktok.com
+pixel.rubiconproject.com
+
+# --- fingerprinting -----------------------------------------------------
+fpjs.io
+fingerprintjs.com

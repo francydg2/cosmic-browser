@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Cosmic
+GenericName=Web Browser
+Comment=A privacy-focused, extremely customizable browser
+TryExec=@CMAKE_INSTALL_FULL_BINDIR@/cosmic
+Exec=@CMAKE_INSTALL_FULL_BINDIR@/cosmic %u
+Icon=cosmic
+Terminal=false
+Categories=Network;WebBrowser;
+MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;
+StartupNotify=true
+StartupWMClass=cosmic
+Keywords=Internet;WWW;Browser;Web;Privacy;
