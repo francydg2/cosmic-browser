@@ -182,7 +182,7 @@ jobs:
         with:
           name: cosmic-${{ steps.version.outputs.value }}-${{ matrix.artifact }}
           path: |
-            build/installer/*.exe
+            cosmic-*.exe
             cosmic-*.AppImage
             cosmic-*.dmg
           if-no-files-found: error
