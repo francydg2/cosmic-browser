@@ -1,14 +1,15 @@
 #pragma once
 
+#include <QVector>
 #include <QUrl>
 #include <QWidget>
 
+struct Bookmark;
 class QLineEdit;
+class QGridLayout;
+class QLabel;
 
-/// Phase 1 predisposition of the future Cosmic start page (spec §40-41):
-/// dark gray background, local Saturn illustration, central search bar.
-/// Self-contained: the Theme/UI Engine (Phase 3) can replace this class
-/// without touching tabs or the window shell.
+/// Local start page with search, date/time and shortcuts to saved bookmarks.
 class NewTabPage : public QWidget
 {
     Q_OBJECT
@@ -18,12 +19,20 @@ public:
 
     /// Gives keyboard focus to the central search field.
     void focusSearchField();
+    void setBookmarks(const QVector<Bookmark> &bookmarks);
 
 signals:
     /// Emitted when the user submits the search field; the window
     /// resolves the text (URL vs search, configured engine).
     void inputSubmitted(const QString &text);
+    void bookmarkActivated(const QUrl &url);
 
 private:
+    void updateDateTime();
+
     QLineEdit *m_search;
+    QLabel *m_clock;
+    QLabel *m_date;
+    QLabel *m_emptyBookmarks;
+    QGridLayout *m_bookmarkGrid;
 };

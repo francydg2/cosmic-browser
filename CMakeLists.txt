@@ -162,7 +162,10 @@ qt_add_resources(cosmic "cosmic_res"
 
 include(GNUInstallDirs)
 
-install(TARGETS cosmic RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS cosmic
+    BUNDLE DESTINATION .
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
 
 configure_file(resources/cosmic.desktop.in
     ${CMAKE_CURRENT_BINARY_DIR}/resources/cosmic.desktop @ONLY)
