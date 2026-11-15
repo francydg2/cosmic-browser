@@ -69,8 +69,14 @@ jobs:
           version: "6.7.3"
           host: ${{ matrix.qt-host }}
           arch: ${{ matrix.qt-arch }}
-          modules: qtwebengine qtwebchannel
+          modules: qtwebengine qtwebchannel qtpositioning
           cache: true
+
+      - name: Set up MSVC
+        if: matrix.qt-host == 'windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
 
       - name: Configure (Linux and macOS)
         if: matrix.qt-host != 'windows'
