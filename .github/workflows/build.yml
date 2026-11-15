@@ -99,7 +99,7 @@ jobs:
 
       - name: Test (Linux)
         if: matrix.qt-host == 'linux'
-        run: ctest --test-dir build -E "smoke_https" --output-on-failure
+        run: ctest --test-dir build -E "smoke_https|browser_window" --output-on-failure
 
       - name: Test (Windows and macOS)
         if: matrix.qt-host != 'linux'

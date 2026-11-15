@@ -160,6 +160,16 @@ qt_add_resources(cosmic "cosmic_res"
     FILES ${COSMIC_RESOURCE_FILES}
 )
 
+if(APPLE)
+    set_target_properties(cosmic PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_GUI_IDENTIFIER "app.cosmic.browser"
+        MACOSX_BUNDLE_BUNDLE_NAME "Cosmic"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+    )
+endif()
+
 include(GNUInstallDirs)
 
 install(TARGETS cosmic
@@ -184,16 +194,6 @@ foreach(sz IN ITEMS 16 24 32 48 64 128 256 512)
         RENAME cosmic.png
     )
 endforeach()
-
-if(APPLE)
-    set_target_properties(cosmic PROPERTIES
-        MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_GUI_IDENTIFIER "app.cosmic.browser"
-        MACOSX_BUNDLE_BUNDLE_NAME "Cosmic"
-        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
-    )
-endif()
 
 # ---------------------------------------------------------------------------
 # Packaging (alpha artifacts)
