@@ -173,6 +173,15 @@ jobs:
             --icon-file dist/share/icons/hicolor/512x512/apps/cosmic.png \
             --plugin qt \
             --output appimage
+          rm -f AppDir/AppRun
+          cat > AppDir/AppRun <<'EOF'
+          #!/bin/sh
+          case "${QT_QPA_PLATFORM%%:*}" in
+            wayland|wayland-egl) export QT_QPA_PLATFORM=xcb ;;
+          esac
+          exec "$APPDIR/usr/bin/cosmic" "$@"
+          EOF
+          chmod +x AppDir/AppRun
           image="$(find . -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
           test -n "$image"
           mv "$image" "cosmic-${APP_VERSION}-linux-x64.AppImage"
