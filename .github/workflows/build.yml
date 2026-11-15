@@ -171,8 +171,7 @@ jobs:
             --executable dist/bin/cosmic \
             --desktop-file build/appimage/cosmic.desktop \
             --icon-file dist/share/icons/hicolor/512x512/apps/cosmic.png \
-            --plugin qt \
-            --output appimage
+            --plugin qt
           rm -f AppDir/AppRun
           cat > AppDir/AppRun <<'EOF'
           #!/bin/sh
@@ -182,6 +181,9 @@ jobs:
           exec "$APPDIR/usr/bin/cosmic" "$@"
           EOF
           chmod +x AppDir/AppRun
+          "$RUNNER_TEMP/appimage-tools/linuxdeploy-x86_64.AppImage" \
+            --appdir AppDir \
+            --output appimage
           image="$(find . -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
           test -n "$image"
           mv "$image" "cosmic-${APP_VERSION}-linux-x64.AppImage"
