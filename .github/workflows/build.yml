@@ -69,10 +69,11 @@ jobs:
           version: "6.7.3"
           host: ${{ matrix.qt-host }}
           arch: ${{ matrix.qt-arch }}
-          modules: qtwebengine
+          modules: qtwebengine qtwebchannel
           cache: true
 
-      - name: Configure
+      - name: Configure (Linux and macOS)
+        if: matrix.qt-host != 'windows'
         shell: bash
         run: |
           cmake_args=(-B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -82,6 +83,10 @@ jobs:
             test "$(uname -m)" = "arm64"
           fi
           cmake "${cmake_args[@]}"
+
+      - name: Configure (Windows)
+        if: matrix.qt-host == 'windows'
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_INSTALL_PREFIX=$env:GITHUB_WORKSPACE\dist"
 
       - name: Build
         run: cmake --build build
