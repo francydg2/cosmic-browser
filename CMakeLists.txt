@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(Cosmic
-    VERSION 0.1.0
-    DESCRIPTION "A privacy-focused, extremely customizable Linux browser"
+    VERSION 0.1.1
+    DESCRIPTION "A privacy-focused, customizable desktop browser"
     LANGUAGES CXX
 )
 

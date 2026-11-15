@@ -210,6 +210,8 @@ jobs:
 
             Cosmic is a customizable, privacy-focused desktop browser built with C++20, Qt 6 and Chromium WebEngine.
 
+            Download Cosmic from https://francydg2.github.io/cosmic-browser/.
+
             ### What it does
 
             - Browses the web with tabs, pinned tabs, tab groups and multiple user profiles.

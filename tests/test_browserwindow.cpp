@@ -391,6 +391,13 @@ void TestBrowserWindow::settingsTabAppliesChanges()
     QVERIFY(form);
     QCOMPARE(window->tabWidget()->currentWidget(), form);
     QCOMPARE(window->tabCount(), tabsBefore + 1);
+    auto *settingsSections = form->findChild<QTabWidget *>(QStringLiteral("settingsTabs"));
+    auto *updatesPage = form->findChild<QWidget *>(QStringLiteral("settingsTabUpdates"));
+    QVERIFY(settingsSections);
+    QVERIFY(updatesPage);
+    QCOMPARE(settingsSections->tabText(settingsSections->indexOf(updatesPage)),
+             QStringLiteral("Updates"));
+    QVERIFY(form->findChild<QPushButton *>(QStringLiteral("checkUpdatesButton")));
 
     // A second trigger reuses the tab instead of duplicating it.
     openAction->trigger();
