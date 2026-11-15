@@ -69,7 +69,7 @@ jobs:
           version: "6.7.3"
           host: ${{ matrix.qt-host }}
           arch: ${{ matrix.qt-arch }}
-          modules: qtwebengine qtwebchannel qtpositioning
+          modules: qtwebengine qtwebchannel qtpositioning qtserialport
           cache: true
 
       - name: Set up MSVC
