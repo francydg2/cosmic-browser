@@ -65,7 +65,7 @@ jobs:
           $requiredPaths = @(
             (Join-Path $opensslRoot 'include\openssl\evp.h'),
             (Join-Path $opensslRoot 'lib\libcrypto.lib'),
-            (Join-Path $env:ProgramFilesX86 'Inno Setup 6\ISCC.exe')
+            (Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Inno Setup 6\ISCC.exe')
           )
           foreach ($path in $requiredPaths) {
             if (-not (Test-Path $path)) { throw "Required Windows build dependency is missing: $path" }
