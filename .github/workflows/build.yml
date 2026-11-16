@@ -117,6 +117,9 @@ jobs:
             Select-Object -First 1
           if (-not $crypto) { throw "OpenSSL libcrypto DLL was not found" }
           Copy-Item $crypto.FullName "${{ github.workspace }}\dist\bin" -Force
+          if (-not (Get-ChildItem "${{ github.workspace }}\dist\bin\libcrypto-*.dll" -File)) {
+            throw "OpenSSL libcrypto DLL was not staged beside cosmic.exe"
+          }
 
       - name: Create Windows installer
         if: matrix.qt-host == 'windows'
