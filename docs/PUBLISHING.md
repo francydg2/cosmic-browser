@@ -54,6 +54,8 @@ installed or required.
 - **Windows OpenSSL discovery**: the workflow installs OpenSSL via
   Chocolatey. If `find_package(OpenSSL)` fails there, point
   `OPENSSL_ROOT_DIR` at the Chocolatey OpenSSL dir in the workflow.
+  The matching `libcrypto` DLL is bundled next to `cosmic.exe` in the
+  installer; users should not need to install OpenSSL separately.
 - **Headless WebEngine tests**: the suite runs offscreen
   (`QT_QPA_PLATFORM=offscreen`). If the live-network smoke test
   flakes on a runner, re-run the job; rented runners have working

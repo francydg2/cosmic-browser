@@ -25,7 +25,8 @@ UninstallDisplayIcon={app}\bin\cosmic.exe
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"
 
 [Files]
-Source: "..\dist\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\*"; DestDir: "{app}"; Excludes: "bin\libcrypto-*.dll"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\bin\libcrypto-*.dll"; DestDir: "{app}\bin"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\Cosmic"; Filename: "{app}\bin\cosmic.exe"
