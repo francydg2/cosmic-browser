@@ -57,9 +57,22 @@ jobs:
           brew install ninja openssl@3
           echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
 
-      - name: Install Ninja, OpenSSL and Inno Setup (Windows)
+      - name: Verify preinstalled Windows build tools
         if: matrix.qt-host == 'windows'
-        run: choco install ninja openssl innosetup -y
+        shell: pwsh
+        run: |
+          $opensslRoot = Join-Path $env:ProgramFiles 'OpenSSL'
+          $requiredPaths = @(
+            (Join-Path $opensslRoot 'include\openssl\evp.h'),
+            (Join-Path $opensslRoot 'lib\libcrypto.lib'),
+            (Join-Path $env:ProgramFilesX86 'Inno Setup 6\ISCC.exe')
+          )
+          foreach ($path in $requiredPaths) {
+            if (-not (Test-Path $path)) { throw "Required Windows build dependency is missing: $path" }
+          }
+          Get-Command ninja -ErrorAction Stop | Out-Null
+          & (Join-Path $opensslRoot 'bin\openssl.exe') version
+          "OPENSSL_ROOT_DIR=$opensslRoot" >> $env:GITHUB_ENV
 
       - name: Install Qt (with WebEngine)
         uses: jurplel/install-qt-action@v4
@@ -92,7 +105,7 @@ jobs:
 
       - name: Configure (Windows)
         if: matrix.qt-host == 'windows'
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_INSTALL_PREFIX=$env:GITHUB_WORKSPACE\dist"
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_INSTALL_PREFIX=$env:GITHUB_WORKSPACE\dist" "-DOPENSSL_ROOT_DIR=$env:OPENSSL_ROOT_DIR"
 
       - name: Build
         run: cmake --build build
@@ -117,6 +130,10 @@ jobs:
             Select-Object -First 1
           if (-not $crypto) { throw "OpenSSL libcrypto DLL was not found" }
           Copy-Item $crypto.FullName "${{ github.workspace }}\dist\bin" -Force
+          $ssl = Get-ChildItem "$env:ProgramFiles\OpenSSL\bin\libssl-*.dll" |
+            Select-Object -First 1
+          if (-not $ssl) { throw "OpenSSL libssl DLL was not found" }
+          Copy-Item $ssl.FullName "${{ github.workspace }}\dist\bin" -Force
           if (-not (Get-ChildItem "${{ github.workspace }}\dist\bin\libcrypto-*.dll" -File)) {
             throw "OpenSSL libcrypto DLL was not staged beside cosmic.exe"
           }
