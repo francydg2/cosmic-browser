@@ -31,6 +31,7 @@
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
+#include <QUuid>
 #include <QWebEngineProfile>
 
 #include "browser/Browser.h"
@@ -114,6 +115,7 @@ class TestBrowserWindow : public QObject
 
 private slots:
     void freshTabShowsNewTabPage();
+    void newTabPageTracksBookmarks();
     void openUrlReusesPristineTab();
     void httpsNavigationThroughGui();
     void openCloseReopenTabs();
@@ -154,6 +156,42 @@ void TestBrowserWindow::freshTabShowsNewTabPage()
     QVERIFY(!tab->isShowingCrash());
     QVERIFY(tab->newTabPage() != nullptr);
     QVERIFY(tab->webView() != nullptr);
+
+    delete window;
+}
+
+void TestBrowserWindow::newTabPageTracksBookmarks()
+{
+    deleteAllBrowserWindows();
+    Browser browser;
+    BrowserWindow *window = makeWindow(browser);
+    QVERIFY(window);
+
+    NewTabPage *page = window->currentTab()->newTabPage();
+    const int initialCount = browser.bookmarks()->count();
+    const QUrl url(QStringLiteral("https://cosmic-browser.test/%1")
+                       .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+    const QString id = browser.bookmarks()->add(QStringLiteral("Daily shortcut"), url);
+    QVERIFY(!id.isEmpty());
+    const auto buttons = page->findChildren<QToolButton *>(QStringLiteral("ntpBookmark"));
+    QCOMPARE(buttons.size(), initialCount + 1);
+    QToolButton *addedButton = nullptr;
+    for (QToolButton *button : buttons) {
+        if (button->property("bookmarkUrl").toUrl() == url) {
+            addedButton = button;
+            break;
+        }
+    }
+    QVERIFY(addedButton);
+
+    QSignalSpy activated(page, &NewTabPage::bookmarkActivated);
+    addedButton->click();
+    QCOMPARE(activated.count(), 1);
+    QCOMPARE(activated.takeFirst().at(0).toUrl(), url);
+
+    QVERIFY(browser.bookmarks()->remove(id));
+    QCOMPARE(page->findChildren<QToolButton *>(QStringLiteral("ntpBookmark")).size(),
+             initialCount);
 
     delete window;
 }
@@ -353,6 +391,13 @@ void TestBrowserWindow::settingsTabAppliesChanges()
     QVERIFY(form);
     QCOMPARE(window->tabWidget()->currentWidget(), form);
     QCOMPARE(window->tabCount(), tabsBefore + 1);
+    auto *settingsSections = form->findChild<QTabWidget *>(QStringLiteral("settingsTabs"));
+    auto *updatesPage = form->findChild<QWidget *>(QStringLiteral("settingsTabUpdates"));
+    QVERIFY(settingsSections);
+    QVERIFY(updatesPage);
+    QCOMPARE(settingsSections->tabText(settingsSections->indexOf(updatesPage)),
+             QStringLiteral("Updates"));
+    QVERIFY(form->findChild<QPushButton *>(QStringLiteral("checkUpdatesButton")));
 
     // A second trigger reuses the tab instead of duplicating it.
     openAction->trigger();

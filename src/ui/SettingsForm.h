@@ -3,6 +3,7 @@
 #include <QList>
 #include <QPair>
 #include <QString>
+#include <QUrl>
 #include <QVector>
 #include <QWidget>
 
@@ -17,6 +18,8 @@ class QComboBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
+class QNetworkAccessManager;
+class QNetworkReply;
 class QPushButton;
 class QTabWidget;
 class QToolButton;
@@ -48,6 +51,8 @@ signals:
 
 private:
     void syncCustomTemplateState();
+    void checkForUpdates();
+    void finishUpdateCheck(QNetworkReply *reply);
     void refreshUserWidgets();
     void addUser();
     void renameUser();
@@ -76,6 +81,12 @@ private:
     QLabel *m_statusLabel = nullptr;
     QPushButton *m_saveButton = nullptr;
     QPushButton *m_resetButton = nullptr;
+    QNetworkAccessManager *m_updateManager = nullptr;
+    QPushButton *m_checkUpdatesButton = nullptr;
+    QPushButton *m_downloadUpdateButton = nullptr;
+    QLabel *m_updateStatusLabel = nullptr;
+    QLabel *m_updateVersionLabel = nullptr;
+    QUrl m_updateReleaseUrl;
 
     QComboBox *m_engineCombo = nullptr;
     QLineEdit *m_customEdit = nullptr;

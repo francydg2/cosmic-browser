@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090a12">
+  <meta name="description" content="Scarica Cosmic, il browser desktop personalizzabile e attento alla privacy.">
+  <title>Cosmic — naviga a modo tuo</title>
+  <link rel="icon" href="assets/cosmic.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script src="site.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#" aria-label="Cosmic, pagina iniziale">
+      <img src="assets/cosmic.svg" alt="" width="38" height="38">
+      <span>cosmic</span>
+    </a>
+    <nav aria-label="Navigazione principale">
+      <a href="#funzioni">Funzioni</a>
+      <a href="#download">Download</a>
+      <a class="nav-github" href="https://github.com/francydg2/cosmic-browser" target="_blank" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="status-dot"></span> IL TUO SPAZIO, SUL WEB</p>
+        <h1>La tua prossima<br><span class="gradient-text">orbita online.</span></h1>
+        <p class="hero-description">Un browser desktop veloce, personalizzabile e progettato per lasciarti il controllo. Tutto quello che ti serve, senza rumore.</p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="#download">Scarica Cosmic <span aria-hidden="true">↓</span></a>
+          <a class="button button-quiet" href="#funzioni">Scopri di più <span aria-hidden="true">→</span></a>
+        </div>
+        <p class="version-line">Ultima versione <strong id="latest-version">—</strong><span id="release-date"></span></p>
+      </div>
+      <div class="hero-art" aria-hidden="true">
+        <div class="orbit orbit-one"></div>
+        <div class="orbit orbit-two"></div>
+        <div class="planet"></div>
+        <span class="star star-one">✦</span>
+        <span class="star star-two">✧</span>
+        <span class="star star-three">✦</span>
+        <div class="art-caption">NAVIGA LIBERAMENTE</div>
+      </div>
+    </section>
+
+    <section class="platform-strip" aria-label="Sistemi supportati">
+      <span>DISPONIBILE PER</span>
+      <div><b aria-hidden="true">⊞</b> Windows</div>
+      <div><b aria-hidden="true">◉</b> Linux</div>
+      <div><b aria-hidden="true">⌘</b> Apple Silicon</div>
+    </section>
+
+    <section class="features section-wrap" id="funzioni">
+      <div class="section-heading">
+        <p class="eyebrow">MENO DISTRAZIONI. PIÙ CONTROLLO.</p>
+        <h2>Fatto per il tuo modo<br>di navigare.</h2>
+      </div>
+      <div class="feature-grid">
+        <article class="feature-card">
+          <span class="feature-icon icon-purple" aria-hidden="true">◈</span>
+          <h3>La privacy, sul serio</h3>
+          <p>Blocco delle richieste di tracciamento, navigazione HTTPS e controlli chiari per cookie e permessi dei siti.</p>
+        </article>
+        <article class="feature-card">
+          <span class="feature-icon icon-blue" aria-hidden="true">▦</span>
+          <h3>Il tuo spazio di lavoro</h3>
+          <p>Gruppi di schede, profili separati e sessioni ripristinabili: organizza il web come piace a te.</p>
+        </article>
+        <article class="feature-card">
+          <span class="feature-icon icon-pink" aria-hidden="true">✦</span>
+          <h3>Personalizzabile davvero</h3>
+          <p>Modifica aspetto, barra degli strumenti e colori. La nuova scheda raccoglie ricerca e segnalibri.</p>
+        </article>
+        <article class="feature-card">
+          <span class="feature-icon icon-green" aria-hidden="true">⌁</span>
+          <h3>Le tue password, protette</h3>
+          <p>Un archivio cifrato per le credenziali, custodito sul tuo dispositivo.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="download-section" id="download">
+      <div class="section-wrap">
+        <div class="section-heading download-heading">
+          <p class="eyebrow">PRONTO A PARTIRE?</p>
+          <h2>Trova la tua versione.</h2>
+          <p>Scegli il pacchetto per il tuo computer. Il download punta sempre all'ultima release stabile.</p>
+        </div>
+        <div class="download-grid">
+          <article class="download-card" data-platform="windows" data-suffix="-windows-x64.exe">
+            <div class="platform-mark windows-mark" aria-hidden="true">⊞</div>
+            <div class="download-card-copy">
+              <p class="card-kicker">PER DESKTOP</p>
+              <h3>Windows</h3>
+              <p>Windows 10 o successivo · x64</p>
+            </div>
+            <a class="button button-download" href="https://github.com/francydg2/cosmic-browser/releases/latest" data-download>Scarica .exe <span aria-hidden="true">↓</span></a>
+          </article>
+          <article class="download-card" data-platform="linux" data-suffix="-linux-x64.AppImage">
+            <div class="platform-mark linux-mark" aria-hidden="true">◉</div>
+            <div class="download-card-copy">
+              <p class="card-kicker">PER DESKTOP</p>
+              <h3>Linux</h3>
+              <p>AppImage · x86_64</p>
+            </div>
+            <a class="button button-download" href="https://github.com/francydg2/cosmic-browser/releases/latest" data-download>Scarica AppImage <span aria-hidden="true">↓</span></a>
+          </article>
+          <article class="download-card" data-platform="macos" data-suffix="-macos-arm64.dmg">
+            <div class="platform-mark mac-mark" aria-hidden="true">⌘</div>
+            <div class="download-card-copy">
+              <p class="card-kicker">PER DESKTOP</p>
+              <h3>Mac</h3>
+              <p>Apple Silicon · arm64</p>
+            </div>
+            <a class="button button-download" href="https://github.com/francydg2/cosmic-browser/releases/latest" data-download>Scarica .dmg <span aria-hidden="true">↓</span></a>
+          </article>
+        </div>
+        <p class="download-note" id="download-note">I download si aprono da GitHub Releases. La versione per Mac richiede Apple Silicon.</p>
+      </div>
+    </section>
+
+    <section class="install section-wrap">
+      <div class="install-copy">
+        <p class="eyebrow">IN POCHI SECONDI</p>
+        <h2>Scarica. Installa.<br><span class="gradient-text">Esplora.</span></h2>
+        <p>Ogni versione include istruzioni e note di rilascio. Cosmic controlla gli aggiornamenti anche dalla pagina <strong>Impostazioni → Aggiornamenti</strong>.</p>
+        <a class="text-link" href="https://github.com/francydg2/cosmic-browser/releases/latest">Leggi le note di rilascio <span aria-hidden="true">↗</span></a>
+      </div>
+      <div class="install-steps">
+        <div class="step"><span>01</span><div><h3>Scegli il tuo sistema</h3><p>Scarica il pacchetto adatto al tuo computer.</p></div></div>
+        <div class="step"><span>02</span><div><h3>Apri il file scaricato</h3><p>Segui le istruzioni del programma di installazione.</p></div></div>
+        <div class="step"><span>03</span><div><h3>Parti per la tua orbita</h3><p>Apri Cosmic e personalizzalo come vuoi.</p></div></div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <a class="brand" href="#" aria-label="Cosmic, pagina iniziale"><img src="assets/cosmic.svg" alt="" width="30" height="30"><span>cosmic</span></a>
+    <p>Creato per navigare a modo tuo.</p>
+    <a href="https://github.com/francydg2/cosmic-browser" target="_blank" rel="noreferrer">Codice sorgente su GitHub ↗</a>
+  </footer>
+</body>
+</html>

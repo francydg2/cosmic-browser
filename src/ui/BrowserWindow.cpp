@@ -1371,10 +1371,23 @@ void BrowserWindow::wireTab(TabContent *content)
         }
     });
     connect(content, &TabContent::inputSubmitted, this, &BrowserWindow::handleInput);
+    connect(content->newTabPage(), &NewTabPage::bookmarkActivated, this,
+            [this](const QUrl &url) { handleBookmarkOpen(url, false); });
     connect(content, &TabContent::featurePermissionAsk, this,
             &BrowserWindow::handleFeaturePermissionAsk);
     connect(content->webView(), &WebView::savePasswordRequested, this,
             &BrowserWindow::savePasswordForCurrentPage);
+
+    if (m_browser) {
+        Bookmarks *bookmarks = m_browser->bookmarks();
+        content->newTabPage()->setBookmarks(bookmarks->items());
+        connect(bookmarks, &Bookmarks::changed, content->newTabPage(),
+                [page = content->newTabPage(), bookmarks] {
+                    page->setBookmarks(bookmarks->items());
+                });
+    } else {
+        content->newTabPage()->setBookmarks({});
+    }
 
     connect(page, &WebPage::titleChanged, this, [this, content](const QString &title) {
         const int index = m_tabs->indexOf(content);

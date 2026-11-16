@@ -14,22 +14,36 @@
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QCoreApplication>
+#include <QDesktopServices>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QIcon>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QTabWidget>
+#include <QTimer>
 #include <QToolButton>
+#include <QUrl>
+#include <QVersionNumber>
 #include <QVBoxLayout>
 
 namespace {
 
 const auto kCustomId = "custom";
+const QUrl kLatestReleaseApiUrl(
+    QStringLiteral("https://api.github.com/repos/francydg2/cosmic-browser/releases/latest"));
+const QUrl kDownloadPageUrl(QStringLiteral("https://francydg2.github.io/cosmic-browser/"));
+constexpr int kUpdateCheckTimeoutMs = 15000;
 
 const QStringList accentPresets()
 {
@@ -66,6 +80,7 @@ SettingsForm::SettingsForm(Settings *settings, BlocklistInterceptor *interceptor
     , m_userCatalog(catalog)
     , m_vault(vault)
     , m_browser(browser)
+    , m_updateManager(new QNetworkAccessManager(this))
 {
     setObjectName(QStringLiteral("settingsForm"));
 
@@ -213,6 +228,64 @@ SettingsForm::SettingsForm(Settings *settings, BlocklistInterceptor *interceptor
     tabs->addTab(buildAdvancedPage(tabs), QIcon(QStringLiteral(":/icons/wrench.svg")),
                  tr("Advanced"));
 
+    // --- Updates ---------------------------------------------------------
+    auto *updatesPage = new QWidget(tabs);
+    updatesPage->setObjectName(QStringLiteral("settingsTabUpdates"));
+    auto *updatesLayout = new QVBoxLayout(updatesPage);
+    updatesLayout->setSpacing(10);
+    updatesLayout->setContentsMargins(12, 12, 12, 12);
+
+    m_updateVersionLabel = new QLabel(
+        tr("Installed version: %1").arg(QCoreApplication::applicationVersion()),
+        updatesPage);
+    m_updateVersionLabel->setObjectName(QStringLiteral("updateVersionLabel"));
+
+    auto *updatesHint = new QLabel(
+        tr("Check GitHub for a newer version. If one is available, Cosmic will "
+           "open the download page so you can choose the installer for your system."),
+        updatesPage);
+    updatesHint->setObjectName(QStringLiteral("updatesHint"));
+    updatesHint->setWordWrap(true);
+    updatesHint->setStyleSheet(QStringLiteral("color: #7d8290;"));
+
+    m_updateStatusLabel = new QLabel(tr("No update check performed yet."), updatesPage);
+    m_updateStatusLabel->setObjectName(QStringLiteral("updatesStatusLabel"));
+    m_updateStatusLabel->setWordWrap(true);
+
+    auto *updateButtons = new QHBoxLayout;
+    m_checkUpdatesButton = new QPushButton(tr("Check for updates"), updatesPage);
+    m_checkUpdatesButton->setObjectName(QStringLiteral("checkUpdatesButton"));
+    m_downloadUpdateButton = new QPushButton(tr("Download update"), updatesPage);
+    m_downloadUpdateButton->setObjectName(QStringLiteral("downloadUpdateButton"));
+    m_downloadUpdateButton->setEnabled(false);
+    updateButtons->addWidget(m_checkUpdatesButton);
+    updateButtons->addWidget(m_downloadUpdateButton);
+    updateButtons->addStretch(1);
+
+    auto *downloadSiteButton = new QPushButton(tr("Open Cosmic download site"), updatesPage);
+    downloadSiteButton->setObjectName(QStringLiteral("downloadSiteButton"));
+
+    updatesLayout->addWidget(m_updateVersionLabel);
+    updatesLayout->addWidget(updatesHint);
+    updatesLayout->addWidget(m_updateStatusLabel);
+    updatesLayout->addLayout(updateButtons);
+    updatesLayout->addWidget(downloadSiteButton, 0, Qt::AlignLeft);
+    updatesLayout->addStretch(1);
+    tabs->addTab(updatesPage, QIcon(QStringLiteral(":/icons/gear.svg")), tr("Updates"));
+
+    connect(m_checkUpdatesButton, &QPushButton::clicked,
+            this, &SettingsForm::checkForUpdates);
+    connect(m_downloadUpdateButton, &QPushButton::clicked, this, [this] {
+        if (!m_updateReleaseUrl.isEmpty() && !QDesktopServices::openUrl(m_updateReleaseUrl)) {
+            m_updateStatusLabel->setText(tr("Could not open the release page."));
+        }
+    });
+    connect(downloadSiteButton, &QPushButton::clicked, this, [this] {
+        if (!QDesktopServices::openUrl(kDownloadPageUrl)) {
+            m_updateStatusLabel->setText(tr("Could not open the download site."));
+        }
+    });
+
     layout->addWidget(tabs, 1);
 
     auto *actionRow = new QHBoxLayout;
@@ -272,6 +345,76 @@ SettingsForm::SettingsForm(Settings *settings, BlocklistInterceptor *interceptor
         m_addUserButton->setEnabled(false);
         m_renameUserButton->setEnabled(false);
         m_removeUserButton->setEnabled(false);
+    }
+}
+
+void SettingsForm::checkForUpdates()
+{
+    m_checkUpdatesButton->setEnabled(false);
+    m_downloadUpdateButton->setEnabled(false);
+    m_updateReleaseUrl.clear();
+    m_updateStatusLabel->setText(tr("Checking for updates…"));
+
+    QNetworkRequest request(kLatestReleaseApiUrl);
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("Cosmic Browser"));
+    request.setRawHeader("Accept", "application/vnd.github+json");
+    QNetworkReply *reply = m_updateManager->get(request);
+
+    auto *timeout = new QTimer(reply);
+    timeout->setSingleShot(true);
+    connect(timeout, &QTimer::timeout, reply, &QNetworkReply::abort);
+    timeout->start(kUpdateCheckTimeoutMs);
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, timeout] {
+        timeout->stop();
+        finishUpdateCheck(reply);
+    });
+}
+
+void SettingsForm::finishUpdateCheck(QNetworkReply *reply)
+{
+    m_checkUpdatesButton->setEnabled(true);
+    const QByteArray response = reply->readAll();
+    const auto networkError = reply->error();
+    const QString networkErrorText = reply->errorString();
+    reply->deleteLater();
+
+    if (networkError != QNetworkReply::NoError) {
+        m_updateStatusLabel->setText(tr("Could not check for updates: %1")
+                                          .arg(networkErrorText));
+        return;
+    }
+
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(response, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        m_updateStatusLabel->setText(tr("GitHub returned an invalid release response."));
+        return;
+    }
+
+    const QJsonObject release = document.object();
+    QString latestTag = release.value(QStringLiteral("tag_name")).toString().trimmed();
+    if (latestTag.startsWith(QLatin1Char('v'))) {
+        latestTag.remove(0, 1);
+    }
+
+    const QVersionNumber installed =
+        QVersionNumber::fromString(QCoreApplication::applicationVersion());
+    const QVersionNumber latest = QVersionNumber::fromString(latestTag);
+    if (installed.isNull() || latest.isNull()) {
+        m_updateStatusLabel->setText(tr("GitHub returned incomplete release information."));
+        return;
+    }
+
+    if (QVersionNumber::compare(latest, installed) > 0) {
+        m_updateReleaseUrl = kDownloadPageUrl;
+        m_updateStatusLabel->setText(
+            tr("Version %1 is available (installed: %2).")
+                .arg(latest.toString(), installed.toString()));
+        m_downloadUpdateButton->setEnabled(true);
+    } else {
+        m_updateStatusLabel->setText(
+            tr("Cosmic is up to date (version %1).").arg(installed.toString()));
     }
 }
 

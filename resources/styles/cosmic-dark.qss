@@ -198,19 +198,66 @@ QWidget#newTabPage {
                                 stop: 0 #17181e, stop: 1 #0f1013);
 }
 
+QLabel#ntpClock {
+    color: #f0f1f5;
+    font-size: 46px;
+    font-weight: 500;
+}
+
+QLabel#ntpDate {
+    color: #9298a5;
+    font-size: 14px;
+    padding-bottom: 5px;
+}
+
 QLabel#ntpCaption {
     color: #7d8290;
     font-size: 12px;
     font-weight: 600;
     letter-spacing: 6px;
-    padding-top: 6px;
+    padding-top: 2px;
+}
+
+QLabel#ntpHint, QLabel#ntpEmptyBookmarks {
+    color: #7d8290;
+    font-size: 12px;
+}
+
+QLabel#ntpBookmarksTitle {
+    color: #c3c8d2;
+    font-size: 13px;
+    font-weight: 600;
+    padding-bottom: 3px;
+}
+
+QWidget#ntpBookmarksContent {
+    background: transparent;
+}
+
+QToolButton#ntpBookmark {
+    background: #191b21;
+    border: 1px solid #292d37;
+    border-radius: 12px;
+    color: #cdd1da;
+    padding: 10px 8px;
+    text-align: center;
+}
+
+QToolButton#ntpBookmark:hover {
+    background: #24272f;
+    border-color: @ACCENT@;
+    color: #ffffff;
+}
+
+QToolButton#ntpBookmark:pressed {
+    background: #20232b;
 }
 
 QLineEdit#ntpSearch {
     background: #1b1d24;
     border: 1px solid #2a2e39;
-    border-radius: 24px;
-    padding: 14px 22px;
+    border-radius: 20px;
+    padding: 12px 20px;
     font-size: 15px;
     selection-background-color: @ACCENT@;
     selection-color: #ffffff;

@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(Cosmic
-    VERSION 0.1.0
-    DESCRIPTION "A privacy-focused, extremely customizable Linux browser"
+    VERSION 0.1.1
+    DESCRIPTION "A privacy-focused, customizable desktop browser"
     LANGUAGES CXX
 )
 
@@ -160,9 +160,22 @@ qt_add_resources(cosmic "cosmic_res"
     FILES ${COSMIC_RESOURCE_FILES}
 )
 
+if(APPLE)
+    set_target_properties(cosmic PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_GUI_IDENTIFIER "app.cosmic.browser"
+        MACOSX_BUNDLE_BUNDLE_NAME "Cosmic"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+    )
+endif()
+
 include(GNUInstallDirs)
 
-install(TARGETS cosmic RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS cosmic
+    BUNDLE DESTINATION .
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
 
 configure_file(resources/cosmic.desktop.in
     ${CMAKE_CURRENT_BINARY_DIR}/resources/cosmic.desktop @ONLY)
@@ -181,16 +194,6 @@ foreach(sz IN ITEMS 16 24 32 48 64 128 256 512)
         RENAME cosmic.png
     )
 endforeach()
-
-if(APPLE)
-    set_target_properties(cosmic PROPERTIES
-        MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_GUI_IDENTIFIER "app.cosmic.browser"
-        MACOSX_BUNDLE_BUNDLE_NAME "Cosmic"
-        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
-    )
-endif()
 
 # ---------------------------------------------------------------------------
 # Packaging (alpha artifacts)
