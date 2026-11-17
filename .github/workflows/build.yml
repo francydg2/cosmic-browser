@@ -117,7 +117,11 @@ jobs:
 
       - name: Test (Linux)
         if: matrix.qt-host == 'linux'
-        run: ctest --test-dir build --output-on-failure
+        run: |
+          # crashIsolation deliberately crashes a renderer; a core-dump handler
+          # can otherwise keep CTest's output pipe open after the test exits.
+          ulimit -c 0
+          ctest --test-dir build --output-on-failure
 
       - name: Test (Windows and macOS)
         if: matrix.qt-host != 'linux'
