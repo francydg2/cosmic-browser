@@ -3,6 +3,7 @@ package app.cosmic.browser.mobile
 import android.Manifest
 import android.app.DownloadManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
@@ -77,11 +78,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.cosmic.browser.mobile.privacy.RequestProtection
@@ -151,6 +157,7 @@ private class BrowserTab(val id: Long, initialUrl: String = "") {
 class CosmicComposeActivity : ComponentActivity() {
     private var pendingDownload: DownloadInfo? = null
     private var browser: BrowserController? = null
+    private var pendingWidgetSearch = false
 
     private val storagePermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -189,6 +196,32 @@ class CosmicComposeActivity : ComponentActivity() {
                 }
             }
         }
+        handleWidgetIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleWidgetIntent(intent)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) openWidgetSearchIfReady()
+    }
+
+    private fun handleWidgetIntent(intent: Intent?) {
+        if (intent?.action != ACTION_WIDGET_SEARCH) return
+        intent.action = null
+        pendingWidgetSearch = true
+        openWidgetSearchIfReady()
+    }
+
+    private fun openWidgetSearchIfReady() {
+        if (!pendingWidgetSearch || !window.decorView.hasWindowFocus()) return
+        val controller = browser ?: return
+        pendingWidgetSearch = false
+        controller.requestSearchFocus()
     }
 
     override fun onPause() {
@@ -278,6 +311,7 @@ private class BrowserController(
     var restoreSession by mutableStateOf(preferences.getBoolean("restoreSession", true))
         private set
     var settingsCategory by mutableStateOf<SettingsCategory?>(null)
+    var searchFocusRequested by mutableStateOf(false)
     val versionName: String = activity.packageManager
         .getPackageInfo(activity.packageName, 0).versionName ?: "non disponibile"
     var showClearDialog by mutableStateOf(false)
@@ -299,6 +333,11 @@ private class BrowserController(
 
     val activeTab: BrowserTab
         get() = tabs.firstOrNull { it.id == activeTabId } ?: tabs.first()
+
+    fun requestSearchFocus() {
+        screen = BrowserScreen.BROWSER
+        searchFocusRequested = true
+    }
 
     private fun restoreTabs() {
         val restored = mutableListOf<String>()
@@ -962,9 +1001,19 @@ private fun Header(controller: BrowserController) {
 
 @Composable
 private fun AddressBar(controller: BrowserController, tab: BrowserTab) {
-    var text by remember(tab.id) { mutableStateOf(tab.url) }
+    var text by remember(tab.id) { mutableStateOf(TextFieldValue(tab.url)) }
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
     LaunchedEffect(tab.id, tab.url) {
-        text = tab.url
+        text = TextFieldValue(tab.url)
+    }
+    LaunchedEffect(controller.searchFocusRequested) {
+        if (controller.searchFocusRequested) {
+            text = text.copy(selection = TextRange(0, text.text.length))
+            focusRequester.requestFocus()
+            keyboard?.show()
+            controller.searchFocusRequested = false
+        }
     }
     Row(
         modifier = Modifier
@@ -982,11 +1031,11 @@ private fun AddressBar(controller: BrowserController, tab: BrowserTab) {
         OutlinedTextField(
             value = text,
             onValueChange = { text = it },
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).focusRequester(focusRequester),
             singleLine = true,
             placeholder = { Text("Cerca o inserisci un indirizzo", color = CosmicMuted) },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-            keyboardActions = KeyboardActions(onGo = { controller.navigate(text) }),
+            keyboardActions = KeyboardActions(onGo = { controller.navigate(text.text) }),
             colors = OutlinedTextFieldDefaults.colors(
                 focusedTextColor = CosmicText,
                 unfocusedTextColor = CosmicText,
@@ -998,7 +1047,7 @@ private fun AddressBar(controller: BrowserController, tab: BrowserTab) {
             ),
             shape = RoundedCornerShape(24.dp)
         )
-        TextButton(onClick = { controller.navigate(text) }) { Text("Vai") }
+        TextButton(onClick = { controller.navigate(text.text) }) { Text("Vai") }
     }
 }
 

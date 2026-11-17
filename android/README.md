@@ -22,6 +22,10 @@ not yet available. The Compose preview has not yet been verified on a device.
 Settings use the desktop categories and explain which desktop options are not
 yet supported on Android.
 
+Add the **Ricerca Cosmic** widget from the Android home screen's widget picker.
+Tapping it opens Cosmic and focuses the address bar; searches use the selected
+search engine.
+
 ## Build
 
 Install JDK 17 or newer and Android SDK platform/build tools for API 35, then:
