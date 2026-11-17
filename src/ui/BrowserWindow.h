@@ -2,6 +2,8 @@
 
 #include "browser/AppWindow.h"
 #include "core/Session.h"
+#include "ui/TabContent.h"
+#include "web/WebPage.h"
 #include "web/WebPageDelegate.h"
 
 #include <QMainWindow>
@@ -20,10 +22,14 @@ class NotesDialog;
 class TrackerRadarDialog;
 class QTabWidget;
 class QProgressBar;
+class QDialog;
 class QAction;
 class QMenu;
 class QToolButton;
 class QHBoxLayout;
+class QShortcut;
+class QSplitter;
+class QLineEdit;
 class QWidget;
 class QUrl;
 struct UIConfiguration;
@@ -107,11 +113,21 @@ private:
     void showDownloads();
     void showNotes();
     void showTrackerRadar();
+    void showTabSearch();
+    void showReader();
+    void translateCurrentPage();
+    void showPageQrCode();
+    void toggleSplitView();
+    void closeSplitView();
+    TabContent *focusedTab() const;
     void confirmClearBrowsingData();
     void handleFeaturePermissionAsk(WebPage *page, const QUrl &origin,
                                     QWebEnginePage::Feature feature);
     void updateChrome();
+    void updateNavigationActions();
     void wireTab(TabContent *content);
+    void leaveWebFullScreen();
+    void restoreAfterWebFullScreen();
 
     void handleBookmarkOpen(const QUrl &url, bool newTab);
     void addToolbarComponent(const QString &component);
@@ -124,6 +140,7 @@ private:
     void discardBackgroundTabs();
     void tryAutofill(WebPage *page);
     void savePasswordForCurrentPage();
+    void savePasswordForPage(WebPage *page);
     void promptSavePassword(const QUrl &url, const QString &username,
                             const QString &password);
 
@@ -141,6 +158,12 @@ private:
     ActionRegistry *m_actions;
     QStringList m_dynamicActionIds;
     QTabWidget *m_tabs = nullptr;
+    QSplitter *m_contentSplitter = nullptr;
+    QPointer<QWidget> m_splitPanel;
+    QPointer<QWidget> m_splitControls;
+    QPointer<TabContent> m_splitContent;
+    QPointer<QLineEdit> m_splitAddress;
+    bool m_splitFocused = false;
     QToolBar *m_toolbar = nullptr;
     QList<QAction *> m_toolbarActions;   // registry actions, removed (never deleted)
     QList<QWidget *> m_toolbarWidgets;  // owned items, deleted on rebuild
@@ -158,6 +181,16 @@ private:
     QPointer<DownloadsDialog> m_downloadsDialog;
     QPointer<NotesDialog> m_notesDialog;
     QPointer<TrackerRadarDialog> m_trackerRadarDialog;
+    QPointer<QDialog> m_tabSearchDialog;
+    QPointer<WebPage> m_fullScreenPage;
+    QShortcut *m_exitFullScreenShortcut = nullptr;
+    Qt::WindowStates m_beforeFullScreenState;
+    bool m_toolbarWasHidden = false;
+    bool m_tabBarWasHidden = false;
+    bool m_statusBarWasHidden = false;
+    bool m_splitPanelWasHidden = false;
+    bool m_tabsWereHidden = false;
+    bool m_splitControlsWereHidden = false;
 
     QString m_userId; // owning user of this window's tabs
     QList<SessionGroup> m_groups;

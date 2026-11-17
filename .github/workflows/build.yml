@@ -284,15 +284,19 @@ jobs:
             - Adds a session download manager with progress, cancellation and resumption when supported.
             - Adds local Quick Notes with search and optional page or selected-text capture.
             - Adds Tracker Radar for requests blocked by the included domain list.
+            - Adds an independent split view, tab search, a text reader, page translation and QR sharing.
 
             Quick Notes are stored locally without encryption and are shared across profiles. Tracker Radar shows blocked requests across profiles for the current session; it is not a complete tracker detector.
+            Split-view pages are restored as ordinary tabs. Google Translate receives the page address, including query parameters, only after confirmation; QR codes are generated locally.
+
+            **Known issue:** entering full screen on YouTube in the split-view panel can crash the browser. The issue has been observed on Linux with NVIDIA graphics; avoid full screen in split view until it is fixed.
 
             ### Downloads
 
             - **Windows x64:** `cosmic-<version>-windows-x64.exe`
-            - **Apple Silicon (arm64):** `cosmic-<version>-macos-arm64.dmg`
+            - **Apple Silicon (arm64) — beta:** `cosmic-<version>-macos-arm64.dmg`
             - **Linux x64:** `cosmic-<version>-linux-x64.AppImage`
 
-            The Windows installer is unsigned and may trigger SmartScreen. The macOS app is unsigned and not notarized, so Gatekeeper may warn when opening it.
+            The Windows installer is unsigned and may trigger SmartScreen. The macOS beta is unsigned and not notarized, so Gatekeeper may warn when opening it.
             The Linux AppImage uses the system NSS/NSPR libraries for compatibility across distributions.
           files: release-assets/*

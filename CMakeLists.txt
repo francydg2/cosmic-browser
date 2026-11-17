@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(Cosmic
-    VERSION 0.1.2
+    VERSION 0.1.3
     DESCRIPTION "A privacy-focused, customizable desktop browser"
     LANGUAGES CXX
 )
@@ -30,6 +30,16 @@ find_package(Qt6 6.6 REQUIRED COMPONENTS
 qt_standard_project_setup()
 
 find_package(OpenSSL REQUIRED)
+
+include(FetchContent)
+if(POLICY CMP0135)
+    cmake_policy(SET CMP0135 NEW)
+endif()
+FetchContent_Declare(qrcodegen
+    URL https://github.com/nayuki/QR-Code-generator/archive/refs/tags/v1.8.0.tar.gz
+    URL_HASH SHA256=2ec0a4d33d6f521c942eeaf473d42d5fe139abcfa57d2beffe10c5cf7d34ae60
+)
+FetchContent_MakeAvailable(qrcodegen)
 
 # ---------------------------------------------------------------------------
 # Resources (added to every target that loads them at runtime)
@@ -61,13 +71,16 @@ set(COSMIC_RESOURCE_FILES
     resources/icons/palette.svg
     resources/icons/user.svg
     resources/icons/wrench.svg
+    resources/icons/pencil.svg
     resources/blocklists/default.txt
+    resources/licenses/qrcodegen.txt
 )
 
 # ---------------------------------------------------------------------------
 # Static library: all browser code
 # ---------------------------------------------------------------------------
 add_library(cosmic_core STATIC
+    ${qrcodegen_SOURCE_DIR}/cpp/qrcodegen.cpp
     src/core/Logging.h
     src/core/Logging.cpp
     src/core/UrlUtils.h
@@ -145,7 +158,7 @@ add_library(cosmic_core STATIC
     src/ui/BrowserWindow.cpp
 )
 
-target_include_directories(cosmic_core PUBLIC src)
+target_include_directories(cosmic_core PUBLIC src PRIVATE ${qrcodegen_SOURCE_DIR}/cpp)
 
 target_link_libraries(cosmic_core PUBLIC
     Qt6::Core

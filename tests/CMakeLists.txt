@@ -27,7 +27,9 @@ set(NEBULA_TEST_RES_FILES
     ${CMAKE_SOURCE_DIR}/resources/icons/palette.svg
     ${CMAKE_SOURCE_DIR}/resources/icons/user.svg
     ${CMAKE_SOURCE_DIR}/resources/icons/wrench.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/pencil.svg
     ${CMAKE_SOURCE_DIR}/resources/blocklists/default.txt
+    ${CMAKE_SOURCE_DIR}/resources/licenses/qrcodegen.txt
 )
 
 # 1) Engine smoke test: real HTTPS navigation with Qt WebEngine.

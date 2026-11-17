@@ -20,13 +20,16 @@
 #include <QAbstractButton>
 #include <QDir>
 #include <QLabel>
+#include <QInputDialog>
 #include <QListWidget>
 #include <QPushButton>
 #include <QProgressBar>
+#include <QProcess>
 #include <QSignalSpy>
 #include <QScopeGuard>
 #include <QSharedPointer>
 #include <QStyle>
+#include <QStandardPaths>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTableWidget>
@@ -43,6 +46,8 @@
 #include <QUuid>
 #include <QWebEngineProfile>
 #include <QWebEngineDownloadRequest>
+#include <QWebEngineSettings>
+#include <QUrlQuery>
 
 #include "browser/Browser.h"
 #include "browser/DownloadManager.h"
@@ -136,6 +141,15 @@ private slots:
     void newTabPagePrivacyBadgeUpdates();
     void openUrlReusesPristineTab();
     void httpsNavigationThroughGui();
+    void webFullScreen();
+    void searchOpenTabs();
+    void readerShowsTextOnly();
+    void translatePageWithConsent();
+    void pageQrCode();
+    void splitViewNavigationAndSession();
+    void splitViewFullScreen();
+    void splitViewFullScreenClose_data();
+    void splitViewFullScreenClose();
     void autofillRequiresConfirmation();
     void downloadsFromProfiles();
     void quickNotesFromSelection();
@@ -163,6 +177,365 @@ private slots:
     void tabGroups();
     void crashIsolation();
 };
+
+void TestBrowserWindow::splitViewFullScreenClose_data()
+{
+    QTest::addColumn<bool>("secondary");
+    QTest::newRow("primary") << false;
+    QTest::newRow("secondary") << true;
+}
+
+void TestBrowserWindow::splitViewFullScreenClose()
+{
+    QFETCH(bool, secondary);
+    deleteAllBrowserWindows();
+    Browser browser;
+    BrowserWindow *window = makeWindow(browser);
+    QVERIFY(window);
+    window->resize(1400, 900);
+    window->present();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    const QString html = QStringLiteral(
+        "<button style='width:200px;height:100px' "
+        "onclick='document.documentElement.requestFullscreen()'>Fullscreen</button>");
+    WebView *primary = window->currentTab()->webView();
+    QSignalSpy firstLoaded(primary->webPage(), &QWebEnginePage::loadFinished);
+    primary->webPage()->setHtml(html, QUrl(QStringLiteral("https://primary.example/")));
+    QTRY_VERIFY_WITH_TIMEOUT(!firstLoaded.isEmpty(), 10000);
+    findAction(window, QStringLiteral("view.split"))->trigger();
+    auto *content = window->findChild<TabContent *>(QStringLiteral("splitContent"));
+    QVERIFY(content);
+    WebView *other = content->webView();
+    QSignalSpy secondLoaded(other->webPage(), &QWebEnginePage::loadFinished);
+    other->webPage()->setHtml(html, QUrl(QStringLiteral("https://secondary.example/")));
+    QTRY_VERIFY_WITH_TIMEOUT(!secondLoaded.isEmpty(), 10000);
+    WebView *view = secondary ? other : primary;
+    QTRY_VERIFY_WITH_TIMEOUT(view->focusProxy(), 10000);
+    QTest::mouseClick(view->focusProxy(), Qt::LeftButton, Qt::NoModifier, QPoint(50, 50));
+    QTRY_VERIFY_WITH_TIMEOUT(window->isFullScreen(), 10000);
+    if (secondary) {
+        QTRY_VERIFY_WITH_TIMEOUT(window->tabWidget()->isHidden(), 10000);
+    } else {
+        QTRY_VERIFY_WITH_TIMEOUT(content->parentWidget()->isHidden(), 10000);
+    }
+    window->close();
+    deleteAllBrowserWindows();
+    QCoreApplication::processEvents();
+}
+
+void TestBrowserWindow::splitViewNavigationAndSession()
+{
+    deleteAllBrowserWindows();
+    Browser browser;
+    BrowserWindow *window = makeWindow(browser);
+    QVERIFY(window);
+    window->present();
+    WebPage *primary = window->currentTab()->webView()->webPage();
+    QSignalSpy primaryLoaded(primary, &QWebEnginePage::loadFinished);
+    primary->setHtml(QStringLiteral("<title>Primary</title>"),
+                     QUrl(QStringLiteral("https://primary.example/")));
+    QTRY_VERIFY_WITH_TIMEOUT(!primaryLoaded.isEmpty(), 10000);
+    QAction *split = findAction(window, QStringLiteral("view.split"));
+    QVERIFY(split);
+    split->trigger();
+    auto *content = window->findChild<TabContent *>(QStringLiteral("splitContent"));
+    auto *address = window->findChild<QLineEdit *>(QStringLiteral("splitAddress"));
+    QVERIFY(content && address);
+    WebPage *secondary = content->webView()->webPage();
+    QVERIFY(primary != secondary);
+    QCOMPARE(secondary->profile(), browser.profileForUser(window->userId()));
+    address->setText(QStringLiteral("http://127.0.0.1:1/secondary"));
+    QTest::keyClick(address, Qt::Key_Return);
+    QTRY_COMPARE_WITH_TIMEOUT(secondary->url(), QUrl(QStringLiteral("http://127.0.0.1:1/secondary")), 10000);
+    QCOMPARE(primary->url(), QUrl(QStringLiteral("https://primary.example/")));
+    const SessionWindow state = window->sessionState();
+    QCOMPARE(state.tabs.last().url, secondary->url());
+    address->setFocus();
+    QTRY_COMPARE(window->activeWebPage(), secondary);
+    QAction *search = findAction(window, QStringLiteral("tabs.search"));
+    QVERIFY(search);
+    search->trigger();
+    auto *dialog = window->findChild<QDialog *>(QStringLiteral("tabSearchDialog"));
+    QVERIFY(dialog);
+    auto *input = dialog->findChild<QLineEdit *>(QStringLiteral("tabSearchInput"));
+    auto *results = dialog->findChild<QListWidget *>(QStringLiteral("tabSearchResults"));
+    QVERIFY(input && results);
+    input->setText(QStringLiteral("127.0.0.1"));
+    QCOMPARE(results->count(), 1);
+    QTest::keyClick(input, Qt::Key_Return);
+    QCOMPARE(window->activeWebPage(), secondary);
+
+    const QString user = browser.userCatalog()->addUser(
+        QStringLiteral("Split %1").arg(QUuid::createUuid().toString()), QStringLiteral("#7c6cf0"));
+    QVERIFY(!user.isEmpty());
+    const QString oldUser = window->userId();
+    QPointer<QWidget> oldPanel = content->parentWidget();
+    window->switchToUser(user);
+    QCOMPARE(window->userId(), user);
+    QVERIFY(!oldPanel || oldPanel->isHidden());
+    QCOMPARE(browser.userSession(oldUser).tabs.last().url,
+             QUrl(QStringLiteral("http://127.0.0.1:1/secondary")));
+    split->trigger();
+    auto *newContent = window->findChildren<TabContent *>(QStringLiteral("splitContent")).last();
+    QCOMPARE(newContent->webView()->webPage()->profile(), browser.profileForUser(user));
+    QPointer<QWidget> newPanel = newContent->parentWidget();
+    split->trigger();
+    QVERIFY(!newPanel || newPanel->isHidden());
+    deleteAllBrowserWindows();
+    QVERIFY(browser.userCatalog()->removeUser(user));
+}
+
+void TestBrowserWindow::splitViewFullScreen()
+{
+    deleteAllBrowserWindows();
+    Browser browser;
+    BrowserWindow *window = makeWindow(browser);
+    QVERIFY(window);
+    window->present();
+    findAction(window, QStringLiteral("view.split"))->trigger();
+    auto *content = window->findChild<TabContent *>(QStringLiteral("splitContent"));
+    auto *controls = window->findChild<QWidget *>(QStringLiteral("splitControls"));
+    QVERIFY(content && controls);
+    WebView *view = content->webView();
+    QSignalSpy loaded(view->webPage(), &QWebEnginePage::loadFinished);
+    view->webPage()->setHtml(QStringLiteral(
+        "<button style='width:200px;height:100px' "
+        "onclick='document.documentElement.requestFullscreen()'>Fullscreen</button>"),
+        QUrl(QStringLiteral("https://split-fullscreen.example/")));
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty(), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(view->focusProxy(), 10000);
+    QTest::mouseClick(view->focusProxy(), Qt::LeftButton, Qt::NoModifier, QPoint(50, 50));
+    QTRY_VERIFY_WITH_TIMEOUT(window->isFullScreen(), 10000);
+    QVERIFY(window->tabWidget()->isHidden());
+    QVERIFY(controls->isHidden());
+    QTest::keyClick(view->focusProxy(), Qt::Key_Escape);
+    QTRY_VERIFY_WITH_TIMEOUT(!window->isFullScreen(), 10000);
+    QVERIFY(!window->tabWidget()->isHidden());
+    QVERIFY(!controls->isHidden());
+    WebView *primary = window->currentTab()->webView();
+    QSignalSpy primaryLoaded(primary->webPage(), &QWebEnginePage::loadFinished);
+    primary->webPage()->setHtml(QStringLiteral(
+        "<button style='width:200px;height:100px' "
+        "onclick='document.documentElement.requestFullscreen()'>Fullscreen</button>"),
+        QUrl(QStringLiteral("https://primary-fullscreen.example/")));
+    QTRY_VERIFY_WITH_TIMEOUT(!primaryLoaded.isEmpty(), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(primary->focusProxy(), 10000);
+    QTest::mouseClick(primary->focusProxy(), Qt::LeftButton, Qt::NoModifier, QPoint(50, 50));
+    QTRY_VERIFY_WITH_TIMEOUT(window->isFullScreen(), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(content->parentWidget()->isHidden(), 10000);
+    QTest::keyClick(primary->focusProxy(), Qt::Key_Escape);
+    QTRY_VERIFY_WITH_TIMEOUT(!window->isFullScreen(), 10000);
+    QVERIFY(!content->parentWidget()->isHidden());
+    deleteAllBrowserWindows();
+}
+
+void TestBrowserWindow::searchOpenTabs()
+{
+    deleteAllBrowserWindows();
+    Browser browser;
+    BrowserWindow *window = makeWindow(browser);
+    QVERIFY(window);
+    window->present();
+    WebPage *first = window->activeWebPage();
+    QSignalSpy firstLoaded(first, &QWebEnginePage::loadFinished);
+    first->setHtml(QStringLiteral("<title>First article</title><p>First</p>"),
+                   QUrl(QStringLiteral("https://first.example/")));
+    QTRY_VERIFY_WITH_TIMEOUT(!firstLoaded.isEmpty(), 10000);
+    QAction *newTab = findAction(window, QStringLiteral("tab.new"));
+    QVERIFY(newTab);
+    newTab->trigger();
+    WebPage *second = window->activeWebPage();
+    QSignalSpy secondLoaded(second, &QWebEnginePage::loadFinished);
+    second->setHtml(QStringLiteral("<title>Second article</title><p>Second</p>"),
+                    QUrl(QStringLiteral("https://second.example/")));
+    QTRY_VERIFY_WITH_TIMEOUT(!secondLoaded.isEmpty(), 10000);
+    QAction *searchAction = findAction(window, QStringLiteral("tabs.search"));
+    QVERIFY(searchAction);
+    searchAction->trigger();
+    auto *dialog = window->findChild<QDialog *>(QStringLiteral("tabSearchDialog"));
+    QVERIFY(dialog);
+    auto *search = dialog->findChild<QLineEdit *>(QStringLiteral("tabSearchInput"));
+    auto *results = dialog->findChild<QListWidget *>(QStringLiteral("tabSearchResults"));
+    QVERIFY(search && results);
+    search->setText(QStringLiteral("first.example"));
+    QCOMPARE(results->count(), 1);
+    QTest::keyClick(search, Qt::Key_Return);
+    QCOMPARE(window->activeWebPage(), first);
+    deleteAllBrowserWindows();
+}
+
+void TestBrowserWindow::readerShowsTextOnly()
+{
+    deleteAllBrowserWindows();
+    Browser browser;
+    BrowserWindow *window = makeWindow(browser);
+    QVERIFY(window);
+    window->present();
+    WebPage *page = window->activeWebPage();
+    QSignalSpy loaded(page, &QWebEnginePage::loadFinished);
+    page->setHtml(QStringLiteral("<title>Article</title><nav><p>Navigation</p></nav>"
+                                 "<article><h1>Heading</h1><p>Hello &lt;world&gt;</p>"
+                                 "<script>document.body.dataset.executed = 'yes'</script>"
+                                 "</article>"),
+                  QUrl(QStringLiteral("https://reader.example/")));
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty(), 10000);
+    QAction *readerAction = findAction(window, QStringLiteral("page.reader"));
+    QVERIFY(readerAction);
+    readerAction->trigger();
+    QDialog *dialog = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT((dialog = window->findChild<QDialog *>(
+                                  QStringLiteral("readerDialog"))), 10000);
+    auto *text = dialog->findChild<QPlainTextEdit *>(QStringLiteral("readerText"));
+    QVERIFY(text);
+    QVERIFY(text->toPlainText().contains(QStringLiteral("Heading")));
+    QVERIFY(text->toPlainText().contains(QStringLiteral("Hello <world>")));
+    QVERIFY(!text->toPlainText().contains(QStringLiteral("Navigation")));
+    QVERIFY(!text->toPlainText().contains(QStringLiteral("document.body")));
+    deleteAllBrowserWindows();
+}
+
+void TestBrowserWindow::translatePageWithConsent()
+{
+    deleteAllBrowserWindows();
+    Browser browser;
+    BrowserWindow *window = makeWindow(browser);
+    QVERIFY(window);
+    window->present();
+    WebPage *page = window->activeWebPage();
+    QSignalSpy loaded(page, &QWebEnginePage::loadFinished);
+    const QUrl original(QStringLiteral("https://example.test/article?a=1&b=2"));
+    page->setHtml(QStringLiteral("<p>Test</p>"), original);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty(), 10000);
+    QAction *translate = findAction(window, QStringLiteral("page.translate"));
+    QVERIFY(translate);
+    QTimer::singleShot(0, [] {
+        auto *input = qobject_cast<QInputDialog *>(QApplication::activeModalWidget());
+        if (input) {
+            QTimer::singleShot(0, [] {
+                if (auto *question = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+                    question->button(QMessageBox::Yes)->click();
+                }
+            });
+            input->accept();
+        }
+    });
+    translate->trigger();
+    QCOMPARE(window->tabCount(), 2);
+    const QUrl translation = window->activeWebPage()->requestedUrl();
+    QCOMPARE(translation.host(), QStringLiteral("translate.google.com"));
+    const QUrlQuery query(translation);
+    QCOMPARE(query.queryItemValue(QStringLiteral("tl")), QStringLiteral("it"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("u"), QUrl::FullyDecoded), original.toString());
+    deleteAllBrowserWindows();
+}
+
+void TestBrowserWindow::pageQrCode()
+{
+    deleteAllBrowserWindows();
+    Browser browser;
+    BrowserWindow *window = makeWindow(browser);
+    QVERIFY(window);
+    window->present();
+    WebPage *page = window->activeWebPage();
+    QSignalSpy loaded(page, &QWebEnginePage::loadFinished);
+    const QUrl original(QStringLiteral("https://example.test/article?a=1&b=2"));
+    page->setHtml(QStringLiteral("<p>Test</p>"), original);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty(), 10000);
+    QAction *action = findAction(window, QStringLiteral("page.qr"));
+    QVERIFY(action);
+    action->trigger();
+    auto *dialog = window->findChild<QDialog *>(QStringLiteral("pageQrDialog"));
+    QVERIFY(dialog);
+    auto *label = dialog->findChild<QLabel *>(QStringLiteral("pageQrImage"));
+    QVERIFY(label);
+    QVERIFY(!label->pixmap().isNull());
+
+    const QString decoder = QStandardPaths::findExecutable(QStringLiteral("zbarimg"));
+    if (!decoder.isEmpty()) {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("code.png"));
+        QVERIFY(label->pixmap().save(path));
+        QProcess process;
+        process.start(decoder, {QStringLiteral("--quiet"), QStringLiteral("--raw"), path});
+        QVERIFY(process.waitForFinished(10000));
+        QCOMPARE(process.exitCode(), 0);
+        QCOMPARE(QString::fromUtf8(process.readAllStandardOutput()).trimmed(),
+                 original.toString(QUrl::FullyEncoded));
+    }
+    deleteAllBrowserWindows();
+}
+
+void TestBrowserWindow::webFullScreen()
+{
+    deleteAllBrowserWindows();
+    Browser browser;
+    BrowserWindow *window = makeWindow(browser);
+    QVERIFY(window);
+    browser.settings()->setTabPosition(QStringLiteral("vertical"));
+    QVERIFY(!window->createGroup(QStringLiteral("Video"), QStringLiteral("#123456")).isEmpty());
+    window->showMaximized();
+    TabContent *tab = window->currentTab();
+    QVERIFY(tab);
+    WebView *view = tab->webView();
+    WebPage *page = view->webPage();
+    QVERIFY(page->settings()->testAttribute(QWebEngineSettings::FullScreenSupportEnabled));
+    QSignalSpy loaded(page, &QWebEnginePage::loadFinished);
+    page->setHtml(QStringLiteral(
+        "<html><body style='margin:0'><button style='width:200px;height:100px' "
+        "onclick='document.documentElement.requestFullscreen()'>Fullscreen</button>"
+        "</body></html>"), QUrl(QStringLiteral("https://fullscreen.example/")));
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty(), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(view->focusProxy(), 10000);
+    auto *toolbar = window->findChild<QToolBar *>(QStringLiteral("navToolbar"));
+    auto *groupStrip = window->findChild<QWidget *>(QStringLiteral("groupStrip"));
+    QVERIFY(toolbar && groupStrip);
+    QVERIFY(!toolbar->isHidden());
+    QVERIFY(!window->tabWidget()->tabBar()->isHidden());
+    QVERIFY(!groupStrip->isHidden());
+
+    QTest::mouseClick(view->focusProxy(), Qt::LeftButton, Qt::NoModifier, QPoint(50, 50));
+    QTRY_VERIFY_WITH_TIMEOUT(window->isFullScreen(), 10000);
+    QVERIFY(toolbar->isHidden());
+    QVERIFY(window->tabWidget()->tabBar()->isHidden());
+    QVERIFY(groupStrip->isHidden());
+    QTRY_VERIFY_WITH_TIMEOUT(view->width() >= window->centralWidget()->width() - 2, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(view->height() >= window->centralWidget()->height() - 2, 5000);
+    QTest::keyClick(view->focusProxy(), Qt::Key_Escape);
+    QTRY_VERIFY_WITH_TIMEOUT(!window->isFullScreen(), 10000);
+    QVERIFY(window->isMaximized());
+    QVERIFY(!toolbar->isHidden());
+    QVERIFY(!window->tabWidget()->tabBar()->isHidden());
+    QVERIFY(!groupStrip->isHidden());
+    auto documentExited = QSharedPointer<bool>::create(false);
+    QTRY_VERIFY_WITH_TIMEOUT(([&] {
+        page->runJavaScript(QStringLiteral("document.fullscreenElement === null"),
+                            [documentExited](const QVariant &result) {
+            *documentExited = result.toBool();
+        });
+        return *documentExited;
+    }()), 10000);
+
+    QTest::mouseClick(view->focusProxy(), Qt::LeftButton, Qt::NoModifier, QPoint(50, 50));
+    QTRY_VERIFY_WITH_TIMEOUT(window->isFullScreen(), 10000);
+    page->runJavaScript(QStringLiteral("document.exitFullscreen()"));
+    QTRY_VERIFY_WITH_TIMEOUT(!window->isFullScreen(), 10000);
+    QVERIFY(window->isMaximized());
+    QVERIFY(!toolbar->isHidden());
+    QVERIFY(!window->tabWidget()->tabBar()->isHidden());
+    QVERIFY(!groupStrip->isHidden());
+
+    QTest::mouseClick(view->focusProxy(), Qt::LeftButton, Qt::NoModifier, QPoint(50, 50));
+    QTRY_VERIFY_WITH_TIMEOUT(window->isFullScreen(), 10000);
+    QAction *newTab = findAction(window, QStringLiteral("tab.new"));
+    QVERIFY(newTab);
+    newTab->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(!window->isFullScreen(), 10000);
+    QVERIFY(window->isMaximized());
+    QVERIFY(!toolbar->isHidden());
+    QVERIFY(!window->tabWidget()->tabBar()->isHidden());
+    deleteAllBrowserWindows();
+}
 
 void TestBrowserWindow::trackerRadarShowsBlockedRequests()
 {
@@ -1126,6 +1499,16 @@ void TestBrowserWindow::toolbarActionsCluster()
     QVERIFY(window->findChild<QToolButton *>(QStringLiteral("keyButton")));
     auto *gear = window->findChild<QToolButton *>(QStringLiteral("settingsButton"));
     QVERIFY(gear);
+    auto *pageTools = window->findChild<QToolButton *>(QStringLiteral("pageToolsButton"));
+    QVERIFY(pageTools && pageTools->menu());
+    QVERIFY(!pageTools->icon().isNull());
+    for (const QString &id : {QStringLiteral("tabs.search"), QStringLiteral("page.reader"),
+                              QStringLiteral("page.translate"), QStringLiteral("page.qr"),
+                              QStringLiteral("view.split")}) {
+        QAction *action = findAction(window, id);
+        QVERIFY(action);
+        QVERIFY(pageTools->menu()->actions().contains(action));
+    }
 
     // The star menu lists the bookmarked sites.
     const QString id = browser.bookmarks()->add(QStringLiteral("Example"),

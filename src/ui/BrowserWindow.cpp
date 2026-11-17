@@ -21,6 +21,7 @@
 #include "web/BlocklistInterceptor.h"
 #include "web/WebPage.h"
 #include "web/WebView.h"
+#include "qrcodegen.hpp"
 
 #include <QAction>
 #include <QApplication>
@@ -41,25 +42,37 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLayoutItem>
+#include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPlainTextEdit>
+#include <QPainter>
+#include <QPushButton>
 #include <QPointer>
 #include <QProgressBar>
 #include <QResizeEvent>
+#include <QShortcut>
+#include <QSharedPointer>
 #include <QStatusBar>
 #include <QStandardPaths>
+#include <QSplitter>
 #include <QStyle>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
+#include <QToolTip>
 #include <QUuid>
 #include <QVBoxLayout>
 #include <QWebEngineHistory>
 #include <QWebEngineDownloadRequest>
+#include <QWebEngineFullScreenRequest>
 #include <QWebEngineProfile>
+#include <QWebEngineSettings>
+#include <QWebEngineScript>
 
 namespace {
 
@@ -175,11 +188,35 @@ BrowserWindow::BrowserWindow(Browser *browser, QWidget *parent)
     centralLayout->setContentsMargins(0, 0, 0, 0);
     centralLayout->setSpacing(0);
     centralLayout->addWidget(m_groupStrip);
-    centralLayout->addWidget(m_tabs);
+    m_contentSplitter = new QSplitter(Qt::Horizontal, central);
+    m_contentSplitter->setObjectName(QStringLiteral("browserSplitter"));
+    m_contentSplitter->setChildrenCollapsible(false);
+    m_contentSplitter->addWidget(m_tabs);
+    centralLayout->addWidget(m_contentSplitter);
     setCentralWidget(central);
 
     connect(m_tabs, &QTabWidget::tabCloseRequested, this, &BrowserWindow::closeTab);
     connect(m_tabs, &QTabWidget::currentChanged, this, &BrowserWindow::updateChrome);
+    connect(m_tabs, &QTabWidget::currentChanged, this, [this] {
+        if (m_fullScreenPage && m_fullScreenPage != (m_splitContent
+                ? m_splitContent->webView()->webPage() : nullptr)
+            && (!currentTab() || currentTab()->webView()->webPage() != m_fullScreenPage)) {
+            leaveWebFullScreen();
+        }
+    });
+    connect(qApp, &QApplication::focusChanged, this, [this](QWidget *, QWidget *now) {
+        if (!now) {
+            return;
+        }
+        if (m_splitPanel && (now == m_splitPanel || m_splitPanel->isAncestorOf(now))) {
+            m_splitFocused = true;
+        } else if (now == m_tabs || m_tabs->isAncestorOf(now) || now == m_urlBar) {
+            m_splitFocused = false;
+        }
+        if (m_reloadAction) {
+            updateNavigationActions();
+        }
+    });
     m_tabs->tabBar()->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_tabs->tabBar(), &QTabBar::customContextMenuRequested, this,
             &BrowserWindow::showTabContextMenu);
@@ -195,18 +232,18 @@ BrowserWindow::BrowserWindow(Browser *browser, QWidget *parent)
 
     // --- actions (all shortcuts registered here, never in widgets) --------
     m_actions->define(QStringLiteral("nav.back"), tr("Back"), QKeySequence::Back, [this] {
-        if (auto *tab = currentTab()) {
+        if (auto *tab = focusedTab()) {
             tab->webView()->back();
         }
     });
     m_actions->define(QStringLiteral("nav.forward"), tr("Forward"), QKeySequence::Forward, [this] {
-        if (auto *tab = currentTab()) {
+        if (auto *tab = focusedTab()) {
             tab->webView()->forward();
         }
     });
     m_reloadAction = m_actions->define(QStringLiteral("nav.reload"), tr("Reload"),
                                        QKeySequence::Refresh, [this] {
-        auto *tab = currentTab();
+        auto *tab = focusedTab();
         if (!tab) {
             return;
         }
@@ -295,7 +332,12 @@ BrowserWindow::BrowserWindow(Browser *browser, QWidget *parent)
     }
     m_actions->define(QStringLiteral("urlbar.focus"), tr("Focus Address Bar"),
                       QKeySequence(Qt::CTRL | Qt::Key_L), [this] {
-        m_urlBar->setFocus();
+        if (m_splitFocused && m_splitAddress) {
+            m_splitAddress->setFocus();
+            m_splitAddress->selectAll();
+        } else {
+            m_urlBar->setFocus();
+        }
     });
     m_actions->define(QStringLiteral("window.new"), tr("New Tab"),
                       QKeySequence(Qt::CTRL | Qt::Key_N), [this] {
@@ -315,6 +357,18 @@ BrowserWindow::BrowserWindow(Browser *browser, QWidget *parent)
                       QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N), [this] { showNotes(); });
     m_actions->define(QStringLiteral("radar.open"), tr("Tracker Radar"), {},
                       [this] { showTrackerRadar(); });
+    m_actions->define(QStringLiteral("tabs.search"), tr("Search tabs…"),
+                      QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_A),
+                      [this] { showTabSearch(); });
+    m_actions->define(QStringLiteral("page.reader"), tr("Reader mode"), {},
+                      [this] { showReader(); });
+    m_actions->define(QStringLiteral("page.translate"), tr("Translate page…"), {},
+                      [this] { translateCurrentPage(); });
+    m_actions->define(QStringLiteral("page.qr"), tr("QR code for page"), {},
+                      [this] { showPageQrCode(); });
+    m_actions->define(QStringLiteral("view.split"), tr("Toggle split view"),
+                      QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_2),
+                      [this] { toggleSplitView(); });
     m_actions->define(QStringLiteral("settings.users"), tr("Users…"), {},
                       [this] { openSettingsTab(QStringLiteral("users")); });
     m_actions->define(QStringLiteral("bookmark.add"), tr("Bookmark This Page…"),
@@ -413,6 +467,11 @@ BrowserWindow::BrowserWindow(Browser *browser, QWidget *parent)
     toolbar->setIconSize(QSize(22, 22));
     toolbar->setContentsMargins(10, 6, 10, 6);
     m_toolbar = toolbar;
+
+    m_exitFullScreenShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+    m_exitFullScreenShortcut->setEnabled(false);
+    connect(m_exitFullScreenShortcut, &QShortcut::activated,
+            this, &BrowserWindow::leaveWebFullScreen);
 
     // --- user button (address bar companion, re-added on rebuild) ---------
     m_userButton = new QToolButton(toolbar);
@@ -578,6 +637,403 @@ void BrowserWindow::showTrackerRadar()
     m_trackerRadarDialog->activateWindow();
 }
 
+void BrowserWindow::showTabSearch()
+{
+    if (m_tabSearchDialog) {
+        m_tabSearchDialog->show();
+        m_tabSearchDialog->raise();
+        m_tabSearchDialog->activateWindow();
+        return;
+    }
+
+    auto *dialog = new QDialog(this);
+    dialog->setObjectName(QStringLiteral("tabSearchDialog"));
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(tr("Search tabs"));
+    dialog->resize(580, 420);
+    m_tabSearchDialog = dialog;
+    auto *layout = new QVBoxLayout(dialog);
+    auto *search = new QLineEdit(dialog);
+    search->setObjectName(QStringLiteral("tabSearchInput"));
+    search->setPlaceholderText(tr("Search open tabs by title or address"));
+    auto *list = new QListWidget(dialog);
+    list->setObjectName(QStringLiteral("tabSearchResults"));
+    layout->addWidget(search);
+    layout->addWidget(list);
+
+    using TabTarget = QPair<QPointer<BrowserWindow>, QPointer<QWidget>>;
+    auto targets = QSharedPointer<QList<TabTarget>>::create();
+    const auto refresh = [list, targets](const QString &query) {
+        list->clear();
+        targets->clear();
+        for (BrowserWindow *window : BrowserWindow::allWindows()) {
+            for (int i = 0; i < window->tabWidget()->count(); ++i) {
+                QWidget *widget = window->tabWidget()->widget(i);
+                QString title = window->tabWidget()->tabText(i);
+                QString address;
+                if (TabContent *tab = window->tabAt(i)) {
+                    QUrl url = tab->webView()->url();
+                    url.setUserInfo(QString());
+                    address = url.toDisplayString();
+                    if (title.isEmpty()) {
+                        title = tab->webView()->title();
+                    }
+                }
+                if (!title.contains(query, Qt::CaseInsensitive)
+                    && !address.contains(query, Qt::CaseInsensitive)) {
+                    continue;
+                }
+                const int targetIndex = targets->size();
+                targets->append({window, widget});
+                auto *item = new QListWidgetItem(
+                    address.isEmpty() ? title : title + QLatin1Char('\n') + address, list);
+                item->setData(Qt::UserRole, targetIndex);
+            }
+            if (TabContent *tab = window->m_splitContent) {
+                QUrl url = tab->webView()->url();
+                url.setUserInfo(QString());
+                const QString address = url.toDisplayString();
+                const QString title = tr("Split view") + QStringLiteral(" — ")
+                    + (tab->webView()->title().isEmpty() ? tr("New Tab")
+                                                          : tab->webView()->title());
+                if (title.contains(query, Qt::CaseInsensitive)
+                    || address.contains(query, Qt::CaseInsensitive)) {
+                    const int targetIndex = targets->size();
+                    targets->append({window, tab});
+                    auto *item = new QListWidgetItem(
+                        address.isEmpty() ? title : title + QLatin1Char('\n') + address, list);
+                    item->setData(Qt::UserRole, targetIndex);
+                }
+            }
+        }
+        if (list->count()) {
+            list->setCurrentRow(0);
+        }
+    };
+    const auto activate = [dialog, targets](QListWidgetItem *item) {
+        if (!item) {
+            return;
+        }
+        const int index = item->data(Qt::UserRole).toInt();
+        if (index < 0 || index >= targets->size()) {
+            return;
+        }
+        const TabTarget target = targets->at(index);
+        if (!target.first || !target.second) {
+            return;
+        }
+        const int tabIndex = target.first->tabWidget()->indexOf(target.second);
+        if (tabIndex < 0) {
+            if (target.second == target.first->m_splitContent) {
+                target.first->present();
+                target.first->m_splitFocused = true;
+                if (target.first->m_splitContent->isShowingNewTab()) {
+                    target.first->m_splitContent->newTabPage()->focusSearchField();
+                } else {
+                    target.first->m_splitContent->webView()->setFocus();
+                }
+                dialog->close();
+            }
+            return;
+        }
+        if (TabContent *tab = target.first->tabAt(tabIndex)) {
+            const SessionGroup group = target.first->groupById(tab->groupId());
+            if (!group.id.isEmpty() && group.collapsed) {
+                target.first->setGroupCollapsed(group.id, false);
+            }
+        }
+        target.first->tabWidget()->setCurrentIndex(tabIndex);
+        target.first->m_splitFocused = false;
+        target.first->present();
+        dialog->close();
+    };
+    connect(search, &QLineEdit::textChanged, dialog, refresh);
+    connect(search, &QLineEdit::returnPressed, dialog,
+            [list, activate] { activate(list->currentItem()); });
+    connect(list, &QListWidget::itemActivated, dialog, activate);
+    refresh(QString());
+    dialog->show();
+    search->setFocus();
+}
+
+void BrowserWindow::showReader()
+{
+    TabContent *tab = focusedTab();
+    if (!tab || tab->isShowingNewTab() || tab->isShowingCrash()) {
+        statusBar()->showMessage(tr("Open a page to use reader mode."), 4000);
+        return;
+    }
+    QPointer<WebPage> page = tab->webView()->webPage();
+    const QUrl originalUrl = page->url();
+    const QString title = page->title();
+    QPointer<BrowserWindow> window(this);
+    page->runJavaScript(QStringLiteral(R"JS(
+        (() => {
+            const root = document.querySelector('article, main, [role="main"]') || document.body;
+            if (!root) return '';
+            const nodes = root.querySelectorAll('h1,h2,h3,h4,p,li,blockquote,pre');
+            const parts = [];
+            let size = 0;
+            for (const node of nodes) {
+                if (node.closest('nav,aside,footer,header,script,style')
+                    || node.parentElement.closest('li,blockquote,pre')) continue;
+                const text = node.innerText.trim();
+                if (!text) continue;
+                parts.push(text);
+                size += text.length;
+                if (size >= 300000) break;
+            }
+            return parts.join('\n\n');
+        })()
+    )JS"), QWebEngineScript::ApplicationWorld,
+        [window, page, originalUrl, title](const QVariant &result) {
+            if (!window || !page || page->url() != originalUrl) {
+                return;
+            }
+            const QString text = result.toString().trimmed();
+            if (text.isEmpty()) {
+                window->statusBar()->showMessage(
+                    window->tr("No readable article text was found on this page."), 5000);
+                return;
+            }
+            auto *dialog = new QDialog(window);
+            dialog->setObjectName(QStringLiteral("readerDialog"));
+            dialog->setAttribute(Qt::WA_DeleteOnClose);
+            dialog->setWindowTitle(window->tr("Reader — %1").arg(title));
+            dialog->resize(760, 700);
+            auto *layout = new QVBoxLayout(dialog);
+            auto *reader = new QPlainTextEdit(dialog);
+            reader->setObjectName(QStringLiteral("readerText"));
+            reader->setReadOnly(true);
+            reader->setPlainText(text);
+            layout->addWidget(reader);
+            dialog->show();
+        });
+}
+
+void BrowserWindow::translateCurrentPage()
+{
+    TabContent *tab = focusedTab();
+    if (!tab || tab->isShowingNewTab() || tab->isShowingCrash()) {
+        statusBar()->showMessage(tr("Open a web page to translate it."), 4000);
+        return;
+    }
+    QUrl url = tab->webView()->url();
+    if ((url.scheme() != QLatin1String("http") && url.scheme() != QLatin1String("https"))
+        || url.host().isEmpty()) {
+        statusBar()->showMessage(tr("Only HTTP and HTTPS pages can be translated."), 5000);
+        return;
+    }
+    const QStringList languages = {tr("Italian"), tr("English"), tr("French"),
+                                   tr("German"), tr("Spanish"), tr("Portuguese"),
+                                   tr("Japanese")};
+    const QStringList codes = {QStringLiteral("it"), QStringLiteral("en"), QStringLiteral("fr"),
+                               QStringLiteral("de"), QStringLiteral("es"), QStringLiteral("pt"),
+                               QStringLiteral("ja")};
+    bool ok = false;
+    const QString selected = QInputDialog::getItem(
+        this, tr("Translate page"), tr("Translate into:"), languages, 0, false, &ok);
+    if (!ok) {
+        return;
+    }
+    if (QMessageBox::question(
+            this, tr("Translate with Google"),
+            tr("Google Translate will receive this page's address, including its query "
+               "parameters. Pages requiring a login may not be accessible. Continue?"))
+        != QMessageBox::Yes) {
+        return;
+    }
+    url.setUserInfo(QString());
+    const QByteArray target = QByteArrayLiteral("https://translate.google.com/translate?sl=auto&tl=")
+        + codes.at(languages.indexOf(selected)).toUtf8()
+        + QByteArrayLiteral("&u=") + QUrl::toPercentEncoding(url.toString(QUrl::FullyEncoded));
+    addTab(QUrl::fromEncoded(target), false);
+}
+
+void BrowserWindow::showPageQrCode()
+{
+    TabContent *tab = focusedTab();
+    if (!tab || tab->isShowingNewTab() || tab->isShowingCrash()) {
+        statusBar()->showMessage(tr("Open a web page to create its QR code."), 4000);
+        return;
+    }
+    QUrl url = tab->webView()->url();
+    if ((url.scheme() != QLatin1String("http") && url.scheme() != QLatin1String("https"))
+        || url.host().isEmpty()) {
+        statusBar()->showMessage(tr("Only HTTP and HTTPS addresses can be shared."), 4000);
+        return;
+    }
+    url.setUserInfo(QString());
+    try {
+        const QByteArray encoded = url.toEncoded();
+        const auto qr = qrcodegen::QrCode::encodeText(encoded.constData(),
+                                                       qrcodegen::QrCode::Ecc::MEDIUM);
+        constexpr int border = 4;
+        const int scale = qMax(3, 440 / (qr.getSize() + 2 * border));
+        const int imageSize = (qr.getSize() + 2 * border) * scale;
+        QImage image(imageSize, imageSize, QImage::Format_RGB32);
+        image.fill(Qt::white);
+        QPainter painter(&image);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(Qt::black);
+        for (int y = 0; y < qr.getSize(); ++y) {
+            for (int x = 0; x < qr.getSize(); ++x) {
+                if (qr.getModule(x, y)) {
+                    painter.drawRect((x + border) * scale, (y + border) * scale,
+                                     scale, scale);
+                }
+            }
+        }
+        painter.end();
+
+        auto *dialog = new QDialog(this);
+        dialog->setObjectName(QStringLiteral("pageQrDialog"));
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->setWindowTitle(tr("Share page with QR code"));
+        auto *layout = new QVBoxLayout(dialog);
+        auto *label = new QLabel(dialog);
+        label->setObjectName(QStringLiteral("pageQrImage"));
+        label->setAlignment(Qt::AlignCenter);
+        label->setPixmap(QPixmap::fromImage(image));
+        layout->addWidget(label);
+        auto *notice = new QLabel(tr("The code contains the page address, including its "
+                                     "query parameters."), dialog);
+        notice->setWordWrap(true);
+        layout->addWidget(notice);
+        auto *license = new QPushButton(tr("QR code library license"), dialog);
+        connect(license, &QPushButton::clicked, dialog, [dialog] {
+            QFile file(QStringLiteral(":/licenses/qrcodegen.txt"));
+            if (!file.open(QIODevice::ReadOnly)) {
+                QMessageBox::warning(dialog, dialog->tr("License"),
+                                     dialog->tr("Could not read the license."));
+                return;
+            }
+            QMessageBox::information(dialog, dialog->tr("QR code library license"),
+                                     QString::fromUtf8(file.readAll()));
+        });
+        layout->addWidget(license);
+        dialog->show();
+    } catch (const qrcodegen::data_too_long &) {
+        QMessageBox::warning(this, tr("QR code"),
+                             tr("This address is too long to fit in a QR code."));
+    }
+}
+
+void BrowserWindow::toggleSplitView()
+{
+    if (m_splitPanel) {
+        closeSplitView();
+        return;
+    }
+    if (!m_browser || m_fullScreenPage) {
+        return;
+    }
+    auto *panel = new QWidget(m_contentSplitter);
+    panel->setObjectName(QStringLiteral("splitPanel"));
+    m_splitPanel = panel;
+    auto *layout = new QVBoxLayout(panel);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    auto *controls = new QWidget(panel);
+    controls->setObjectName(QStringLiteral("splitControls"));
+    m_splitControls = controls;
+    auto *row = new QHBoxLayout(controls);
+    row->setContentsMargins(4, 4, 4, 4);
+    auto *back = new QToolButton(controls);
+    back->setIcon(QIcon(QStringLiteral(":/icons/back.svg")));
+    back->setToolTip(tr("Back"));
+    auto *forward = new QToolButton(controls);
+    forward->setIcon(QIcon(QStringLiteral(":/icons/forward.svg")));
+    forward->setToolTip(tr("Forward"));
+    auto *reload = new QToolButton(controls);
+    reload->setIcon(QIcon(QStringLiteral(":/icons/reload.svg")));
+    reload->setToolTip(tr("Reload"));
+    auto *address = new QLineEdit(controls);
+    address->setObjectName(QStringLiteral("splitAddress"));
+    address->setPlaceholderText(tr("Search or enter an address"));
+    m_splitAddress = address;
+    auto *close = new QToolButton(controls);
+    close->setIcon(QIcon(QStringLiteral(":/icons/close.svg")));
+    close->setToolTip(tr("Close split view"));
+    row->addWidget(back);
+    row->addWidget(forward);
+    row->addWidget(reload);
+    row->addWidget(address, 1);
+    row->addWidget(close);
+    layout->addWidget(controls);
+
+    auto *content = new TabContent(this, m_browser->profileForUser(m_userId), m_userId, panel);
+    content->setObjectName(QStringLiteral("splitContent"));
+    m_splitContent = content;
+    layout->addWidget(content, 1);
+    wireTab(content);
+    connect(back, &QToolButton::clicked, content->webView(), &WebView::back);
+    connect(forward, &QToolButton::clicked, content->webView(), &WebView::forward);
+    connect(reload, &QToolButton::clicked, content->webView(), &WebView::reload);
+    connect(close, &QToolButton::clicked, this, &BrowserWindow::closeSplitView);
+    connect(address, &QLineEdit::returnPressed, this, [this, content, address] {
+        const QString text = address->text().trimmed();
+        if (!text.isEmpty() && m_browser) {
+            content->webView()->setUrl(m_browser->resolveInput(text));
+            content->webView()->setFocus();
+        }
+    });
+    connect(content->webView(), &WebView::urlChanged, address, [address](const QUrl &url) {
+        QUrl display = url;
+        display.setUserInfo(QString());
+        address->setText(display == QUrl(QStringLiteral("about:blank"))
+                             ? QString() : display.toDisplayString());
+    });
+    connect(content->webView(), &WebView::urlChanged, this, [this] { updateNavigationActions(); });
+    connect(content->webView(), &WebView::loadStarted, this, [this] { updateNavigationActions(); });
+    connect(content->webView(), &WebView::loadFinished, this, [this] { updateNavigationActions(); });
+    connect(content, &TabContent::modeChanged, this, [this] { updateNavigationActions(); });
+    connect(content->webView(), &WebView::loadFinished, content,
+            [this, page = content->webView()->webPage()](bool ok) {
+        if (ok) {
+            QPointer<WebPage> guard(page);
+            QTimer::singleShot(700, page, [this, guard] {
+                if (guard) {
+                    tryAutofill(guard);
+                }
+            });
+        }
+    });
+    m_contentSplitter->addWidget(panel);
+    m_contentSplitter->setSizes({1, 1});
+    m_splitFocused = true;
+    panel->show();
+    content->newTabPage()->focusSearchField();
+    updateNavigationActions();
+}
+
+void BrowserWindow::closeSplitView()
+{
+    if (!m_splitPanel) {
+        return;
+    }
+    if (m_splitContent && m_fullScreenPage == m_splitContent->webView()->webPage()) {
+        leaveWebFullScreen();
+    }
+    QWidget *panel = m_splitPanel;
+    if (m_splitContent) {
+        m_splitContent->webView()->stop();
+    }
+    m_splitContent = nullptr;
+    m_splitControls = nullptr;
+    m_splitAddress = nullptr;
+    m_splitPanel = nullptr;
+    m_splitFocused = false;
+    panel->hide();
+    panel->deleteLater();
+    updateNavigationActions();
+}
+
+TabContent *BrowserWindow::focusedTab() const
+{
+    return m_splitFocused && m_splitContent ? m_splitContent.data() : currentTab();
+}
+
 // ---------------------------------------------------------------------------
 // AppWindow
 // ---------------------------------------------------------------------------
@@ -610,7 +1066,7 @@ void BrowserWindow::openUrl(const QUrl &url, bool background)
 
 WebPage *BrowserWindow::activeWebPage() const
 {
-    const TabContent *tab = currentTab();
+    const TabContent *tab = focusedTab();
     return tab ? tab->webView()->webPage() : nullptr;
 }
 
@@ -633,6 +1089,15 @@ SessionWindow BrowserWindow::sessionState() const
         tabState.group = tab->groupId();
         tabState.user = tab->userId();
         state.tabs.append(tabState);
+    }
+    if (m_splitContent) {
+        const QUrl url = m_splitContent->webView()->url();
+        if (url.isValid() && !url.isEmpty() && url != QUrl(QStringLiteral("about:blank"))) {
+            SessionTab tabState;
+            tabState.url = url;
+            tabState.user = m_splitContent->userId();
+            state.tabs.append(tabState);
+        }
     }
     return state;
 }
@@ -766,6 +1231,7 @@ void BrowserWindow::switchToUser(const QString &userId)
         return;
     }
     m_browser->storeUserSession(m_userId, sessionState());
+    closeSplitView();
 
     for (int i = 0; i < m_tabs->count(); ++i) {
         if (TabContent *tab = tabAt(i)) {
@@ -958,7 +1424,7 @@ void BrowserWindow::navigateCurrent(const QUrl &url)
 
 void BrowserWindow::goHome()
 {
-    TabContent *tab = currentTab();
+    TabContent *tab = focusedTab();
     if (!tab) {
         return;
     }
@@ -1398,7 +1864,7 @@ void BrowserWindow::showTabContextMenu(const QPoint &pos)
 void BrowserWindow::updateGroupStrip()
 {
     const bool show = !m_groups.isEmpty();
-    m_groupStrip->setVisible(show);
+    m_groupStrip->setVisible(show && !m_fullScreenPage);
     while (QLayoutItem *item = m_groupStripLayout->takeAt(0)) {
         delete item->widget();
         delete item;
@@ -1507,19 +1973,89 @@ void BrowserWindow::handleFeaturePermissionAsk(WebPage *page, const QUrl &origin
 void BrowserWindow::wireTab(TabContent *content)
 {
     WebPage *page = content->webView()->webPage();
+    page->settings()->setAttribute(QWebEngineSettings::FullScreenSupportEnabled, true);
+    connect(page, &QWebEnginePage::fullScreenRequested, this,
+            [this, content, page](QWebEngineFullScreenRequest request) {
+        if (request.toggleOn()) {
+            if ((content != currentTab() && content != m_splitContent)
+                || content->isShowingNewTab()
+                || content->isShowingCrash() || m_fullScreenPage) {
+                request.reject();
+                return;
+            }
+            m_fullScreenPage = page;
+            m_beforeFullScreenState = windowState();
+            m_toolbarWasHidden = m_toolbar->isHidden();
+            m_tabBarWasHidden = m_tabs->tabBar()->isHidden();
+            m_statusBarWasHidden = statusBar()->isHidden();
+            m_tabsWereHidden = m_tabs->isHidden();
+            m_splitPanelWasHidden = !m_splitPanel || m_splitPanel->isHidden();
+            m_splitControlsWereHidden = !m_splitControls || m_splitControls->isHidden();
+            m_toolbar->hide();
+            m_tabs->tabBar()->hide();
+            m_groupStrip->hide();
+            statusBar()->hide();
+            if (content == m_splitContent) {
+                m_tabs->hide();
+                m_splitControls->hide();
+            } else if (m_splitPanel) {
+                m_splitPanel->hide();
+            }
+            m_exitFullScreenShortcut->setEnabled(true);
+            showFullScreen();
+            request.accept();
+            const QString host = page->url().host().isEmpty()
+                ? tr("This page") : page->url().host();
+            QToolTip::showText(mapToGlobal(QPoint(width() / 2, 20)),
+                               tr("%1 is in full screen. Press Esc to exit.").arg(host),
+                               this, QRect(), 3500);
+        } else {
+            request.accept();
+            if (page == m_fullScreenPage) {
+                restoreAfterWebFullScreen();
+            }
+        }
+    });
+    connect(page, &QWebEnginePage::loadStarted, this, [this, page] {
+        if (page == m_fullScreenPage) {
+            leaveWebFullScreen();
+        }
+    });
+    connect(page, &QWebEnginePage::renderProcessTerminated, this, [this, page] {
+        if (page == m_fullScreenPage) {
+            leaveWebFullScreen();
+        }
+    });
 
     connect(content, &TabContent::modeChanged, this, [this, content] {
+        if (content->webView()->webPage() == m_fullScreenPage
+            && (content->isShowingNewTab() || content->isShowingCrash())) {
+            leaveWebFullScreen();
+        }
         if (content == currentTab()) {
             updateChrome();
         }
     });
-    connect(content, &TabContent::inputSubmitted, this, &BrowserWindow::handleInput);
+    connect(content, &TabContent::inputSubmitted, this, [this, content](const QString &input) {
+        if (content == m_splitContent && m_browser) {
+            content->webView()->setUrl(m_browser->resolveInput(input));
+            content->webView()->setFocus();
+        } else {
+            handleInput(input);
+        }
+    });
     connect(content->newTabPage(), &NewTabPage::bookmarkActivated, this,
-            [this](const QUrl &url) { handleBookmarkOpen(url, false); });
+            [this, content](const QUrl &url) {
+        if (content == m_splitContent) {
+            content->webView()->setUrl(url);
+        } else {
+            handleBookmarkOpen(url, false);
+        }
+    });
     connect(content, &TabContent::featurePermissionAsk, this,
             &BrowserWindow::handleFeaturePermissionAsk);
     connect(content->webView(), &WebView::savePasswordRequested, this,
-            &BrowserWindow::savePasswordForCurrentPage);
+            [this, page] { savePasswordForPage(page); });
 
     if (m_browser) {
         Bookmarks *bookmarks = m_browser->bookmarks();
@@ -1625,25 +2161,50 @@ void BrowserWindow::wireTab(TabContent *content)
 // Chrome state
 // ---------------------------------------------------------------------------
 
+void BrowserWindow::leaveWebFullScreen()
+{
+    if (!m_fullScreenPage) {
+        return;
+    }
+    m_fullScreenPage->triggerAction(QWebEnginePage::ExitFullScreen);
+    restoreAfterWebFullScreen();
+}
+
+void BrowserWindow::restoreAfterWebFullScreen()
+{
+    if (!m_fullScreenPage) {
+        return;
+    }
+    m_fullScreenPage = nullptr;
+    m_exitFullScreenShortcut->setEnabled(false);
+    QToolTip::hideText();
+    m_toolbar->setVisible(!m_toolbarWasHidden);
+    m_tabs->setVisible(!m_tabsWereHidden);
+    m_tabs->tabBar()->setVisible(!m_tabBarWasHidden);
+    if (m_splitPanel) {
+        m_splitPanel->setVisible(!m_splitPanelWasHidden);
+    }
+    if (m_splitControls) {
+        m_splitControls->setVisible(!m_splitControlsWereHidden);
+    }
+    m_groupStrip->setVisible(!m_groups.isEmpty());
+    statusBar()->setVisible(!m_statusBarWasHidden);
+    setWindowState(m_beforeFullScreenState);
+}
+
 void BrowserWindow::updateChrome()
 {
     TabContent *tab = currentTab();
+    updateNavigationActions();
     if (!tab) {
         // Settings tab (Chrome style): no page behind the chrome.
         m_urlBar->setPage(nullptr);
         m_urlBar->setBookmarked(false);
-        m_actions->action(QStringLiteral("nav.back"))->setEnabled(false);
-        m_actions->action(QStringLiteral("nav.forward"))->setEnabled(false);
-        m_actions->action(QStringLiteral("nav.home"))->setEnabled(false);
         m_actions->action(QStringLiteral("tab.reopen"))->setEnabled(!m_closedTabs.empty());
         if (QAction *pinAction = m_actions->action(QStringLiteral("tab.pin"))) {
             pinAction->setText(tr("Pin Tab"));
             pinAction->setEnabled(false);
         }
-        m_reloadAction->setIcon(QIcon(QStringLiteral(":/icons/reload.svg")));
-        m_reloadAction->setText(tr("Reload"));
-        m_reloadAction->setToolTip(tr("Reload"));
-        m_reloadAction->setEnabled(false);
         m_progress->setVisible(false);
         setWindowTitle(tr("Settings — Cosmic"));
         return;
@@ -1662,12 +2223,7 @@ void BrowserWindow::updateChrome()
     m_urlBar->setBookmarked(m_browser && m_browser->bookmarks()
                             && m_browser->bookmarks()->contains(currentUrl));
 
-    auto *back = m_actions->action(QStringLiteral("nav.back"));
-    auto *forward = m_actions->action(QStringLiteral("nav.forward"));
     auto *reopen = m_actions->action(QStringLiteral("tab.reopen"));
-    back->setEnabled(page->history()->canGoBack());
-    forward->setEnabled(page->history()->canGoForward());
-    m_actions->action(QStringLiteral("nav.home"))->setEnabled(!tab->isShowingNewTab());
     reopen->setEnabled(!m_closedTabs.empty());
 
     // Pin action label mirrors the current tab state.
@@ -1694,18 +2250,34 @@ void BrowserWindow::updateChrome()
 
     // Reload action doubles as Stop while a page is loading.
     const bool loading = page->isLoading();
-    m_reloadAction->setIcon(QIcon(loading ? QStringLiteral(":/icons/stop.svg")
-                                          : QStringLiteral(":/icons/reload.svg")));
-    m_reloadAction->setText(loading ? tr("Stop") : tr("Reload"));
-    m_reloadAction->setToolTip(loading ? tr("Stop") : tr("Reload"));
-    m_reloadAction->setEnabled(!tab->isShowingNewTab());
-
     m_progress->setVisible(loading);
 
     refreshTabColors();
 
     const QString title = m_tabs->tabText(m_tabs->currentIndex());
     setWindowTitle(title.isEmpty() ? tr("Cosmic") : title + QStringLiteral(" — Cosmic"));
+}
+
+void BrowserWindow::updateNavigationActions()
+{
+    QAction *back = m_actions->action(QStringLiteral("nav.back"));
+    QAction *forward = m_actions->action(QStringLiteral("nav.forward"));
+    QAction *home = m_actions->action(QStringLiteral("nav.home"));
+    if (!back || !forward || !home || !m_reloadAction) {
+        return;
+    }
+    TabContent *tab = focusedTab();
+    WebPage *page = tab ? tab->webView()->webPage() : nullptr;
+    back->setEnabled(page && page->history()->canGoBack());
+    forward->setEnabled(page && page->history()->canGoForward());
+    const bool hasPage = tab && !tab->isShowingNewTab();
+    home->setEnabled(hasPage);
+    const bool loading = page && page->isLoading();
+    m_reloadAction->setIcon(QIcon(loading ? QStringLiteral(":/icons/stop.svg")
+                                          : QStringLiteral(":/icons/reload.svg")));
+    m_reloadAction->setText(loading ? tr("Stop") : tr("Reload"));
+    m_reloadAction->setToolTip(loading ? tr("Stop") : tr("Reload"));
+    m_reloadAction->setEnabled(hasPage);
 }
 
 // ---------------------------------------------------------------------------
@@ -1862,6 +2434,23 @@ void BrowserWindow::applyUILayout()
         button->setToolTip(tr("Tracker Radar"));
     }
     m_toolbarActions.append(radarAction);
+    auto *toolsButton = new QToolButton(m_toolbar);
+    toolsButton->setObjectName(QStringLiteral("pageToolsButton"));
+    toolsButton->setProperty("toolbarIcon", true);
+    toolsButton->setAutoRaise(true);
+    toolsButton->setFixedSize(38, 38);
+    toolsButton->setIcon(QIcon(QStringLiteral(":/icons/pencil.svg")));
+    toolsButton->setToolTip(tr("Page tools"));
+    toolsButton->setPopupMode(QToolButton::InstantPopup);
+    auto *toolsMenu = new QMenu(toolsButton);
+    toolsMenu->addAction(m_actions->action(QStringLiteral("tabs.search")));
+    toolsMenu->addAction(m_actions->action(QStringLiteral("page.reader")));
+    toolsMenu->addAction(m_actions->action(QStringLiteral("page.translate")));
+    toolsMenu->addAction(m_actions->action(QStringLiteral("page.qr")));
+    toolsMenu->addAction(m_actions->action(QStringLiteral("view.split")));
+    toolsButton->setMenu(toolsMenu);
+    m_toolbar->addWidget(toolsButton);
+    m_toolbarWidgets.append(toolsButton);
     const UiLayout::UiToolbarMetrics metrics = UiLayout::toolbarMetrics(cfg.toolbar);
     m_toolbar->setIconSize(QSize(metrics.iconSize, metrics.iconSize));
     m_toolbar->setMinimumHeight(metrics.height);
@@ -2139,7 +2728,7 @@ void BrowserWindow::tryAutofill(WebPage *page)
     if (!m_browser || !page) {
         return;
     }
-    if (!currentTab() || currentTab()->webView()->webPage() != page) {
+    if (activeWebPage() != page) {
         return;
     }
     PasswordVault *vault = m_browser->passwordVault();
@@ -2160,8 +2749,8 @@ void BrowserWindow::tryAutofill(WebPage *page)
     const QString entryId = entry.id;
     page->runJavaScript(QStringLiteral("!!document.querySelector('input[type=\"password\"]')"),
                         [this, guard, windowGuard, expectedUrl, entryId](const QVariant &result) {
-        if (!windowGuard || !guard || guard->url() != expectedUrl || !currentTab()
-            || currentTab()->webView()->webPage() != guard || !result.toBool()) {
+        if (!windowGuard || !guard || guard->url() != expectedUrl
+            || activeWebPage() != guard || !result.toBool()) {
             return;
         }
         if (QMessageBox::question(this, tr("Password vault"),
@@ -2170,8 +2759,8 @@ void BrowserWindow::tryAutofill(WebPage *page)
             != QMessageBox::Yes) {
             return;
         }
-        if (!windowGuard || !guard || guard->url() != expectedUrl || !m_browser || !currentTab()
-            || currentTab()->webView()->webPage() != guard) {
+        if (!windowGuard || !guard || guard->url() != expectedUrl || !m_browser
+            || activeWebPage() != guard) {
             return;
         }
         PasswordVault *currentVault = m_browser->passwordVault();
@@ -2198,14 +2787,14 @@ void BrowserWindow::tryAutofill(WebPage *page)
 
 void BrowserWindow::savePasswordForCurrentPage()
 {
-    if (!m_browser) {
+    savePasswordForPage(activeWebPage());
+}
+
+void BrowserWindow::savePasswordForPage(WebPage *page)
+{
+    if (!m_browser || !page) {
         return;
     }
-    TabContent *tab = currentTab();
-    if (!tab) {
-        return;
-    }
-    WebPage *page = tab->webView()->webPage();
     QPointer<WebPage> guard(page);
     QPointer<BrowserWindow> self(this);
     page->runJavaScript(kExtractPasswordScript, [guard, self](const QVariant &result) {
