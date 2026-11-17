@@ -14,7 +14,32 @@ DownloadManager::DownloadManager(QObject *parent)
 void DownloadManager::attachProfile(QWebEngineProfile *profile)
 {
     connect(profile, &QWebEngineProfile::downloadRequested, this,
-            &DownloadManager::requested);
+            [this](QWebEngineDownloadRequest *request) {
+        // Qt 6.7 may emit a fresh request with the same profile and ID on resume.
+        for (int i = 0; i < m_downloads.size(); ++i) {
+            const auto &existing = m_downloads.at(i);
+            if (existing && existing->parent() == request->parent()
+                && existing->id() == request->id()) {
+                if (request->state() == QWebEngineDownloadRequest::DownloadRequested) {
+                    request->setDownloadDirectory(existing->downloadDirectory());
+                    request->setDownloadFileName(existing->downloadFileName());
+                }
+                track(request, i);
+                if (request->state() == QWebEngineDownloadRequest::DownloadRequested) {
+                    request->accept();
+                }
+                emit changed();
+                return;
+            }
+        }
+        if (request->state() == QWebEngineDownloadRequest::DownloadRequested) {
+            emit requested(request);
+            return;
+        }
+        qCWarning(lcCosmic) << "tracking an already accepted download" << request->id();
+        track(request);
+        emit changed();
+    });
 }
 
 void DownloadManager::start(QWebEngineDownloadRequest *request, const QString &path)
@@ -27,7 +52,22 @@ void DownloadManager::start(QWebEngineDownloadRequest *request, const QString &p
     const QFileInfo target(path);
     request->setDownloadDirectory(target.absolutePath());
     request->setDownloadFileName(target.fileName());
-    m_downloads.prepend(request);
+    track(request);
+    request->accept();
+    emit changed();
+}
+
+void DownloadManager::track(QWebEngineDownloadRequest *request, int index)
+{
+    if (index >= 0) {
+        auto *previous = m_downloads.at(index).data();
+        const int attempts = m_retryCounts.take(previous);
+        disconnect(previous, nullptr, this, nullptr);
+        m_downloads[index] = request;
+        m_retryCounts.insert(request, attempts);
+    } else {
+        m_downloads.prepend(request);
+    }
     connect(request, &QWebEngineDownloadRequest::receivedBytesChanged,
             this, &DownloadManager::changed);
     connect(request, &QWebEngineDownloadRequest::totalBytesChanged,
@@ -65,8 +105,6 @@ void DownloadManager::start(QWebEngineDownloadRequest *request, const QString &p
         m_downloads.removeIf([](const auto &item) { return item.isNull(); });
         emit changed();
     });
-    request->accept();
-    emit changed();
 }
 
 void DownloadManager::resume(QWebEngineDownloadRequest *request)

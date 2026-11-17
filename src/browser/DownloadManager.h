@@ -25,6 +25,7 @@ signals:
     void changed();
 
 private:
+    void track(QWebEngineDownloadRequest *request, int index = -1);
     QVector<QPointer<QWebEngineDownloadRequest>> m_downloads;
     QHash<QWebEngineDownloadRequest *, int> m_retryCounts;
 };

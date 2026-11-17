@@ -24,6 +24,7 @@
 #include <QPushButton>
 #include <QProgressBar>
 #include <QSignalSpy>
+#include <QScopeGuard>
 #include <QSharedPointer>
 #include <QStyle>
 #include <QTabBar>
@@ -307,6 +308,7 @@ void TestBrowserWindow::downloadsFromProfiles()
     });
 
     Browser browser;
+    const auto windowCleanup = qScopeGuard([] { deleteAllBrowserWindows(); });
     BrowserWindow *window = makeWindow(browser);
     QVERIFY(window);
     window->present();
@@ -406,7 +408,10 @@ void TestBrowserWindow::downloadsFromProfiles()
     auto *resume = window->findChild<QPushButton *>(QStringLiteral("resumeDownloadButton"));
     QVERIFY(resume);
     QVERIFY(resume->isEnabled());
-    QTRY_COMPARE_WITH_TIMEOUT(item->state(), QWebEngineDownloadRequest::DownloadCompleted, 7000);
+    QTRY_COMPARE_WITH_TIMEOUT(browser.downloads()->downloads().first()->state(),
+                              QWebEngineDownloadRequest::DownloadCompleted, 7000);
+    QCOMPARE(browser.downloads()->downloads().size(), 4);
+    QCOMPARE(dialogs, 5);
     QVERIFY(interruptedRequests >= 2);
     QFile resumed(target);
     QVERIFY(resumed.open(QIODevice::ReadOnly));
@@ -415,7 +420,6 @@ void TestBrowserWindow::downloadsFromProfiles()
     browser.downloads()->clearFinished();
     QVERIFY(browser.downloads()->downloads().isEmpty());
     QVERIFY(browser.userCatalog()->removeUser(user));
-    deleteAllBrowserWindows();
 }
 
 void TestBrowserWindow::autofillRequiresConfirmation()
@@ -1765,7 +1769,11 @@ void TestBrowserWindow::customizerPropertiesApply()
     auto *posCombo =
         customizer->findChild<QComboBox *>(QStringLiteral("propTabPositionCombo"));
     QVERIFY(posCombo);
+    QPointer<QComboBox> oldPosition = posCombo;
     posCombo->setCurrentIndex(1);
+    QVERIFY(oldPosition);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QVERIFY(oldPosition.isNull());
     QCOMPARE(editor->configuration().tabs.position, QStringLiteral("vertical"));
     auto *plusCheck =
         customizer->findChild<QCheckBox *>(QStringLiteral("propShowPlusCheck"));

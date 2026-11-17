@@ -82,7 +82,11 @@ void ComponentProperties::clearEditors()
         if (!taken) {
             break;
         }
-        delete taken->widget();
+        if (QWidget *widget = taken->widget()) {
+            widget->hide();
+            widget->setParent(nullptr);
+            widget->deleteLater();
+        }
         delete taken;
     }
 }
