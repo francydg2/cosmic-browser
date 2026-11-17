@@ -125,11 +125,11 @@ QString urlBarStyleSheet(const QString &background, int radius,
                          const QString &accent)
 {
     return QStringLiteral(
-               "QLineEdit#urlBar { background: %1; border: 1px solid #2a2e39;"
-               " border-radius: %2px; padding: 4px 24px 4px 14px; font-size: 13px;"
+               "QLineEdit#urlBar { background: %1; border: 1px solid #343b48;"
+               " border-radius: %2px; padding: 5px 34px; font-size: 13px;"
                " selection-background-color: %3; selection-color: #ffffff; }"
-               " QLineEdit#urlBar:hover { border-color: #363b49; }"
-               " QLineEdit#urlBar:focus { border-color: %3; }")
+               " QLineEdit#urlBar:hover { border-color: #444c5b; }"
+               " QLineEdit#urlBar:focus { border-color: %3; background: #252a34; }")
         .arg(background, QString::number(radius), accent);
 }
 

@@ -5,10 +5,13 @@
 #include "core/Settings.h"
 #include "ui/BrowserWindow.h"
 #include "ui/Style.h"
+#include "ui/WelcomeDialog.h"
 
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QFile>
 #include <QIcon>
+#include <QSettings>
 #include <QTimer>
 
 int main(int argc, char *argv[])
@@ -52,6 +55,10 @@ int main(int argc, char *argv[])
         QStringLiteral("no-restore"),
         QStringLiteral("Do not restore the previous session"));
     parser.addOption(noRestoreOption);
+    const QCommandLineOption welcomeOption(
+        QStringLiteral("welcome"),
+        QStringLiteral("Open the first-run setup wizard"));
+    parser.addOption(welcomeOption);
     parser.addPositionalArgument(QStringLiteral("url"),
                                  QStringLiteral("URL to open (treated like the address bar)"));
     parser.process(app);
@@ -63,6 +70,22 @@ int main(int argc, char *argv[])
         qCWarning(lcCosmic) << "some XDG directories could not be created";
     }
     Paths::migrateLegacyProfile();
+
+    const QString configPath = Paths::configDir();
+    const bool existingProfile =
+        QFile::exists(configPath + QStringLiteral("/settings.json"))
+        || QFile::exists(configPath + QStringLiteral("/bookmarks.json"))
+        || QFile::exists(configPath + QStringLiteral("/users.json"))
+        || QFile::exists(configPath + QStringLiteral("/session.json"));
+    QSettings onboardingState(QStringLiteral("Cosmic"), QStringLiteral("Cosmic Browser"));
+    if (existingProfile && !onboardingState.value(
+            QStringLiteral("firstRun/completed"), false).toBool()) {
+        onboardingState.setValue(QStringLiteral("firstRun/completed"), true);
+        onboardingState.sync();
+    }
+    const bool showWelcome = parser.isSet(welcomeOption)
+        || (!existingProfile
+            && !onboardingState.value(QStringLiteral("firstRun/completed"), false).toBool());
 
     Style::applyDark(&app);
 
@@ -150,6 +173,18 @@ int main(int argc, char *argv[])
         window->openUrl(browser.resolveInput(arguments.first()));
     }
     window->present();
+    if (showWelcome) {
+        auto *browserWindow = dynamic_cast<BrowserWindow *>(window);
+        if (browserWindow) {
+            QTimer::singleShot(0, browserWindow, [&browser, browserWindow, &onboardingState] {
+            WelcomeDialog welcome(&browser, browserWindow, browserWindow);
+            if (welcome.exec() == QDialog::Accepted) {
+                onboardingState.setValue(QStringLiteral("firstRun/completed"), true);
+                onboardingState.sync();
+            }
+            });
+        }
+    }
 
     // Self-check aid (used by automated verification of the real desktop
     // session): quit cleanly after N ms so the exit path runs for real.

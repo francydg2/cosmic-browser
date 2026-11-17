@@ -10,6 +10,7 @@
 NebulaTabBar::NebulaTabBar(QWidget *parent)
     : QTabBar(parent)
 {
+    setObjectName(QStringLiteral("browserTabBar"));
     setMouseTracking(true);
     setAttribute(Qt::WA_Hover);
     connect(this, &QTabBar::currentChanged, this, &NebulaTabBar::updateCloseButtons);
@@ -21,13 +22,26 @@ bool NebulaTabBar::isVertical() const
         || shape() == QTabBar::TriangularWest || shape() == QTabBar::TriangularEast;
 }
 
+bool NebulaTabBar::isEast() const
+{
+    return shape() == QTabBar::RoundedEast || shape() == QTabBar::TriangularEast;
+}
+
+bool NebulaTabBar::isResizeHandle(const QPoint &position) const
+{
+    constexpr int handleWidth = 8;
+    return isVertical()
+        && (isEast() ? position.x() <= handleWidth
+                     : position.x() >= width() - handleWidth);
+}
+
 QSize NebulaTabBar::tabSizeHint(int index) const
 {
     const QSize hint = QTabBar::tabSizeHint(index);
     if (!isVertical()) {
         return QSize(hint.width(), m_tabHeight);
     }
-    return QSize(200, m_tabHeight);
+    return QSize(m_tabWidth, m_tabHeight);
 }
 
 void NebulaTabBar::setTabHeight(int height)
@@ -38,6 +52,37 @@ void NebulaTabBar::setTabHeight(int height)
     }
     m_tabHeight = clamped;
     updateGeometry();
+    update();
+}
+
+void NebulaTabBar::setVerticalTabWidth(int width)
+{
+    const int clamped = qBound(180, width, 420);
+    if (m_tabWidth != clamped) {
+        m_tabWidth = clamped;
+    }
+
+    const bool vertical = isVertical();
+    const bool orientationChanged = property("verticalTabs").toBool() != vertical;
+    if (orientationChanged) {
+        setProperty("verticalTabs", vertical);
+        style()->unpolish(this);
+        style()->polish(this);
+    }
+    if (vertical) {
+        if (minimumWidth() != clamped || maximumWidth() != clamped) {
+            setFixedWidth(clamped);
+        }
+        setContentsMargins(0, 0, 0, 40);
+    } else {
+        setMinimumWidth(0);
+        setMaximumWidth(QWIDGETSIZE_MAX);
+        setContentsMargins(0, 0, 0, 0);
+    }
+    updateGeometry();
+    if (parentWidget()) {
+        parentWidget()->updateGeometry();
+    }
     update();
 }
 
@@ -82,6 +127,7 @@ void NebulaTabBar::paintEvent(QPaintEvent *event)
 
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
+    painter.fillRect(rect(), QColor(QStringLiteral("#151a23")));
     const auto closeSide = static_cast<QTabBar::ButtonPosition>(
         style()->styleHint(QStyle::SH_TabBar_CloseButtonPosition, nullptr, this));
 
@@ -97,22 +143,25 @@ void NebulaTabBar::paintEvent(QPaintEvent *event)
         const bool selected = i == currentIndex();
         const bool hovered = i == m_hoverIndex && !selected;
         const int vm = m_tabSpacing / 2;
-        const QRect pill = rect.adjusted(4, vm, -4, -vm);
+        const QRect pill = rect.adjusted(8, vm, -8, -vm);
 
         if (selected || hovered) {
             QPainterPath path;
             path.addRoundedRect(pill, m_tabRadius, m_tabRadius);
-            painter.fillPath(path, QColor(selected ? QStringLiteral("#24272f")
-                                                   : QStringLiteral("#1a1d24")));
+            painter.fillPath(path, QColor(selected ? QStringLiteral("#252b37")
+                                                   : QStringLiteral("#1b2029")));
             if (selected) {
-                painter.setPen(QPen(QColor(QStringLiteral("#313643")), 1));
+                painter.setPen(QPen(QColor(QStringLiteral("#3b4555")), 1));
                 painter.setBrush(Qt::NoBrush);
                 painter.drawRoundedRect(pill, m_tabRadius, m_tabRadius);
+                painter.fillRect(QRect(pill.left(), pill.top() + 8, 3,
+                                       qMax(0, pill.height() - 16)),
+                                 QColor(QStringLiteral("#8c7cf2")));
             }
         }
 
-        int textLeft = pill.left() + 13;
-        int textRight = pill.right() - 13;
+        int textLeft = pill.left() + 14;
+        int textRight = pill.right() - 14;
         if (QWidget *closeButton = tabButton(i, closeSide)) {
             if (closeButton->isVisible()) {
                 textRight = qMin(textRight, closeButton->geometry().left() - 6);
@@ -130,7 +179,7 @@ void NebulaTabBar::paintEvent(QPaintEvent *event)
         QColor textColor = tabTextColor(i);
         if (!textColor.isValid()) {
             textColor = QColor(selected ? QStringLiteral("#ffffff")
-                                        : QStringLiteral("#9ba1ad"));
+                                        : QStringLiteral("#a2aab8"));
         }
         painter.setPen(textColor);
         QRect textRect(textLeft, pill.top(), qMax(0, textRight - textLeft), pill.height());
@@ -139,11 +188,38 @@ void NebulaTabBar::paintEvent(QPaintEvent *event)
                                                   textRect.width()));
     }
     paintNewTabButton(&painter);
+    const int edgeX = isEast() ? 0 : width() - 1;
+    painter.setPen(QPen(QColor(m_resizeHover || m_resizing
+                                   ? QStringLiteral("#8c7cf2")
+                                   : QStringLiteral("#2a303b")),
+                        m_resizeHover || m_resizing ? 2 : 1));
+    painter.drawLine(edgeX, 0, edgeX, height());
+    painter.setPen(QColor(m_resizeHover || m_resizing
+                              ? QStringLiteral("#c6beff")
+                              : QStringLiteral("#657084")));
+    const int gripX = isEast() ? 3 : width() - 4;
+    const int gripY = height() / 2;
+    for (int offset = -8; offset <= 8; offset += 8) {
+        painter.drawEllipse(QPoint(gripX, gripY + offset), 1, 1);
+    }
 }
 
 void NebulaTabBar::mouseMoveEvent(QMouseEvent *event)
 {
+    if (m_resizing) {
+        const int delta = event->globalPosition().toPoint().x() - m_resizeStartX;
+        setVerticalTabWidth(m_resizeStartWidth + (isEast() ? -delta : delta));
+        event->accept();
+        return;
+    }
+
     QTabBar::mouseMoveEvent(event);
+    const bool resizeHover = isResizeHandle(event->position().toPoint());
+    if (resizeHover != m_resizeHover) {
+        m_resizeHover = resizeHover;
+        setCursor(resizeHover ? Qt::SplitHCursor : Qt::ArrowCursor);
+        update();
+    }
     const int index = tabAt(event->position().toPoint());
     if (index != m_hoverIndex) {
         m_hoverIndex = index;
@@ -160,6 +236,15 @@ void NebulaTabBar::mouseMoveEvent(QMouseEvent *event)
 void NebulaTabBar::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton
+        && isResizeHandle(event->position().toPoint())) {
+        m_resizing = true;
+        m_resizeStartX = event->globalPosition().toPoint().x();
+        m_resizeStartWidth = m_tabWidth;
+        setCursor(Qt::SplitHCursor);
+        event->accept();
+        return;
+    }
+    if (event->button() == Qt::LeftButton
         && newTabButtonRect().contains(event->position().toPoint())) {
         emit newTabRequested();
         event->accept();
@@ -168,9 +253,30 @@ void NebulaTabBar::mousePressEvent(QMouseEvent *event)
     QTabBar::mousePressEvent(event);
 }
 
+void NebulaTabBar::mouseReleaseEvent(QMouseEvent *event)
+{
+    if (m_resizing && event->button() == Qt::LeftButton) {
+        m_resizing = false;
+        const bool changed = m_tabWidth != m_resizeStartWidth;
+        m_resizeHover = isResizeHandle(event->position().toPoint());
+        setCursor(m_resizeHover ? Qt::SplitHCursor : Qt::ArrowCursor);
+        update();
+        if (changed) {
+            emit verticalTabWidthResized(m_tabWidth);
+        }
+        event->accept();
+        return;
+    }
+    QTabBar::mouseReleaseEvent(event);
+}
+
 void NebulaTabBar::leaveEvent(QEvent *event)
 {
     QTabBar::leaveEvent(event);
+    if (!m_resizing) {
+        m_resizeHover = false;
+        unsetCursor();
+    }
     if (m_hoverIndex != -1) {
         m_hoverIndex = -1;
         updateCloseButtons();
@@ -224,15 +330,16 @@ void NebulaTabBar::paintNewTabButton(QPainter *painter)
     }
     QPainterPath path;
     path.addRoundedRect(rect, 9, 9);
-    painter->fillPath(path, QColor(m_plusHover ? QStringLiteral("#24272f")
-                                               : QStringLiteral("#1b1d24")));
+    painter->fillPath(path, QColor(m_plusHover ? QStringLiteral("#2a303b")
+                                               : QStringLiteral("#20242d")));
     painter->setPen(QPen(QColor(m_plusHover ? QStringLiteral("#ffffff")
-                                            : QStringLiteral("#9ba1ad")),
+                                            : QStringLiteral("#a2aab8")),
                           1.8));
     const QPoint center = rect.center();
     painter->drawLine(center.x() - 6, center.y(), center.x() + 6, center.y());
     painter->drawLine(center.x(), center.y() - 6, center.x(), center.y() + 6);
 }
+
 void NebulaTabBar::updateCloseButtons()
 {
     const auto closeSide = static_cast<QTabBar::ButtonPosition>(
@@ -242,7 +349,9 @@ void NebulaTabBar::updateCloseButtons()
         if (!button) {
             continue;
         }
-        button->setVisible(true);
+        button->setObjectName(QStringLiteral("tabCloseButton"));
+        button->setFixedSize(18, 18);
+        button->setVisible(i == currentIndex() || i == m_hoverIndex);
     }
 }
 

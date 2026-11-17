@@ -20,6 +20,7 @@ const auto kKeyComponent = "component";
 const auto kKeyIconSize = "iconSize";
 const auto kKeySpacing = "spacing";
 const auto kKeyPosition = "position";
+const auto kKeyTabWidth = "tabWidth";
 const auto kKeySide = "side";
 const auto kKeyWidth = "width";
 const auto kKeyVisible = "visible";
@@ -28,11 +29,12 @@ const auto kFileName = "ui.json";
 const auto kIdBack = "nav.back";
 const auto kIdForward = "nav.forward";
 const auto kIdReload = "nav.reload";
+const auto kIdHome = "nav.home";
 const auto kIdContainer = "container";
 const auto kIdUser = "user";
 const auto kIdUrlBar = "urlbar";const auto kIdBookmarks = "bookmarks";
 const auto kIdAi = "ai";
-const auto kIdAiEye = "ai.eye";
+const auto kRemovedAiEye = "ai.eye";
 const auto kIdRam = "ram";
 const auto kIdVault = "vault";
 const auto kIdSettings = "settings";
@@ -75,6 +77,9 @@ QList<UiToolbarItem> parseItems(const QJsonArray &array, bool *ok)
         }
         const QString id =
             value.toObject().value(QString::fromLatin1(kKeyComponent)).toString();
+        if (id == QLatin1String(kRemovedAiEye)) {
+            continue;
+        }
         if (!UiLayout::isKnownComponent(id)) {
             *ok = false;
             return {};
@@ -145,24 +150,25 @@ UIConfiguration UiLayout::defaultConfiguration()
     cfg.schemaVersion = kSchemaVersion;
     cfg.toolbar.left = {{QString::fromLatin1(kIdBack)},
                         {QString::fromLatin1(kIdForward)},
-                        {QString::fromLatin1(kIdReload)}};
+                        {QString::fromLatin1(kIdReload)},
+                        {QString::fromLatin1(kIdHome)}};
     cfg.toolbar.center = {{QString::fromLatin1(kIdUser)},
                           {QString::fromLatin1(kIdUrlBar)}};
     cfg.toolbar.right = {{QString::fromLatin1(kIdBookmarks)},
                          {QString::fromLatin1(kIdAi)},
-                         {QString::fromLatin1(kIdAiEye)},
                          {QString::fromLatin1(kIdRam)},
                          {QString::fromLatin1(kIdVault)},
                          {QString::fromLatin1(kIdSettings)}};
-    cfg.toolbar.iconSize = 20;
+    cfg.toolbar.iconSize = 22;
     cfg.toolbar.spacing = 6;
     cfg.toolbar.height = 56;
     cfg.toolbar.color = QString();
     cfg.urlbar.height = 0;
-    cfg.urlbar.radius = 0;
+    cfg.urlbar.radius = 18;
     cfg.urlbar.maxWidth = 0;
     cfg.urlbar.color = QString();
     cfg.tabs.position = QStringLiteral("horizontal");
+    cfg.tabs.tabWidth = 250;
     cfg.tabs.tabHeight = 36;
     cfg.tabs.tabRadius = 9;
     cfg.tabs.tabSpacing = 6;
@@ -177,11 +183,12 @@ bool UiLayout::isKnownComponent(const QString &id)
 {
     static const QStringList known = {
         QString::fromLatin1(kIdBack),   QString::fromLatin1(kIdForward),
-        QString::fromLatin1(kIdReload), QString::fromLatin1(kIdContainer),
+        QString::fromLatin1(kIdReload), QString::fromLatin1(kIdHome),
+        QString::fromLatin1(kIdContainer),
         QString::fromLatin1(kIdUser),   QString::fromLatin1(kIdUrlBar),
         QString::fromLatin1(kIdBookmarks), QString::fromLatin1(kIdAi),
-        QString::fromLatin1(kIdAiEye),  QString::fromLatin1(kIdRam),
-        QString::fromLatin1(kIdVault),  QString::fromLatin1(kIdSettings)};
+        QString::fromLatin1(kIdRam), QString::fromLatin1(kIdVault),
+        QString::fromLatin1(kIdSettings)};
     return known.contains(id);
 }
 
@@ -301,6 +308,7 @@ QJsonObject UIConfiguration::toJson() const
     root.insert(QStringLiteral("urlbar"), urlbarObj);
     QJsonObject tabsObj;
     tabsObj.insert(QStringLiteral("position"), tabs.position);
+    tabsObj.insert(QStringLiteral("tabWidth"), tabs.tabWidth);
     tabsObj.insert(QStringLiteral("tabHeight"), tabs.tabHeight);
     tabsObj.insert(QStringLiteral("tabRadius"), tabs.tabRadius);
     tabsObj.insert(QStringLiteral("tabSpacing"), tabs.tabSpacing);
@@ -347,7 +355,7 @@ UIConfiguration UIConfiguration::fromJson(const QJsonObject &obj, bool *ok)
             cfg.toolbar.left = parseItems(left.toArray(), &valid);
             cfg.toolbar.center = parseItems(center.toArray(), &valid);
             cfg.toolbar.right = parseItems(right.toArray(), &valid);
-            cfg.toolbar.iconSize = clampedInt(toolbarObj, kKeyIconSize, 20, 16, 32);
+            cfg.toolbar.iconSize = clampedInt(toolbarObj, kKeyIconSize, 22, 16, 32);
             cfg.toolbar.spacing = clampedInt(toolbarObj, kKeySpacing, 6, 0, 16);
             cfg.toolbar.height = clampedInt(toolbarObj, "height", 44, 40, 72);
             cfg.toolbar.color = clampedColor(toolbarObj, "color");
@@ -363,6 +371,7 @@ UIConfiguration UIConfiguration::fromJson(const QJsonObject &obj, bool *ok)
                                           QStringLiteral("horizontal"),
                                           {QStringLiteral("horizontal"),
                                            QStringLiteral("vertical")});
+        cfg.tabs.tabWidth = clampedInt(tabsObj, kKeyTabWidth, 250, 180, 420);
         cfg.tabs.tabHeight = clampedInt(tabsObj, "tabHeight", 36, 32, 48);
         cfg.tabs.tabRadius = clampedInt(tabsObj, "tabRadius", 9, 0, 16);
         cfg.tabs.tabSpacing = clampedInt(tabsObj, "tabSpacing", 6, 0, 12);

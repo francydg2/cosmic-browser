@@ -20,6 +20,8 @@ private slots:
     void corruptFileIgnored();
     void changedSignal();
     void findById();
+    void importsHtmlBookmarksSafely();
+    void rejectsHtmlWithoutBookmarks();
 };
 
 void TestBookmarks::missingFileStartsEmpty()
@@ -146,6 +148,51 @@ void TestBookmarks::findById()
                                      QUrl(QStringLiteral("https://example.com")));
     QCOMPARE(bookmarks.findById(id).url, QUrl(QStringLiteral("https://example.com")));
     QVERIFY(bookmarks.findById(QStringLiteral("ghost")).id.isEmpty());
+}
+
+void TestBookmarks::importsHtmlBookmarksSafely()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString sourcePath = dir.filePath(QStringLiteral("export.html"));
+    QFile source(sourcePath);
+    QVERIFY(source.open(QIODevice::WriteOnly));
+    source.write(R"HTML(
+        <!DOCTYPE NETSCAPE-Bookmark-file-1>
+        <A HREF="https://example.com/?a=1&amp;b=2">Example <b>One</b></A>
+        <a href="javascript:alert(1)">Not a web bookmark</a>
+        <a href="https://example.org">Second</a>
+    )HTML");
+    source.close();
+
+    Bookmarks bookmarks(dir.filePath(QStringLiteral("bookmarks.json")));
+    bookmarks.add(QStringLiteral("Already saved"),
+                  QUrl(QStringLiteral("https://example.com/?a=1&b=2")));
+    int imported = -1;
+    QString error;
+    QVERIFY2(bookmarks.importHtml(sourcePath, &imported, &error), qPrintable(error));
+    QCOMPARE(imported, 1);
+    QCOMPARE(bookmarks.count(), 2);
+    QCOMPARE(bookmarks.items().at(1).title, QStringLiteral("Second"));
+    QCOMPARE(bookmarks.items().at(1).url, QUrl(QStringLiteral("https://example.org")));
+}
+
+void TestBookmarks::rejectsHtmlWithoutBookmarks()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString sourcePath = dir.filePath(QStringLiteral("empty.html"));
+    QFile source(sourcePath);
+    QVERIFY(source.open(QIODevice::WriteOnly));
+    source.write("<html><body>No saved links</body></html>");
+    source.close();
+
+    Bookmarks bookmarks(dir.filePath(QStringLiteral("bookmarks.json")));
+    int imported = -1;
+    QString error;
+    QVERIFY(!bookmarks.importHtml(sourcePath, &imported, &error));
+    QVERIFY(error.contains(QStringLiteral("No bookmarks")));
+    QCOMPARE(bookmarks.count(), 0);
 }
 
 QTEST_GUILESS_MAIN(TestBookmarks)

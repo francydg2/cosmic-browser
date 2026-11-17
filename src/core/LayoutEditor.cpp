@@ -240,6 +240,17 @@ bool LayoutEditor::setTabPosition(const QString &position)
     return true;
 }
 
+bool LayoutEditor::setTabWidth(int width)
+{
+    const int clamped = qBound(180, width, 420);
+    if (m_working.tabs.tabWidth == clamped) {
+        return true;
+    }
+    m_working.tabs.tabWidth = clamped;
+    emit changed();
+    return true;
+}
+
 bool LayoutEditor::setTabHeight(int height)
 {
     const int clamped = qBound(32, height, 48);

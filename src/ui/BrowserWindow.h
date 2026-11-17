@@ -95,7 +95,10 @@ private:
     void reopenClosedTab();
     void pruneGroupIfEmpty(const QString &groupId);
     void navigateCurrent(const QUrl &url);
+    void goHome();
     void handleInput(const QString &text);
+    void toggleBookmarkForCurrentPage();
+    void showSiteInfo();
     void openSettingsTab(const QString &section = QString());
     void confirmClearBrowsingData();
     void handleFeaturePermissionAsk(WebPage *page, const QUrl &origin,
@@ -110,8 +113,6 @@ private:
     void buildBookmarksMenu();
     void buildAiMenu();
     void buildRamMenu();
-    void setAiPageContext(bool enabled);
-    void openAiService(const QUrl &url);
     void applyTabPosition();
     void discardBackgroundTabs();
     void tryAutofill(WebPage *page);
@@ -138,10 +139,8 @@ private:
     QList<QWidget *> m_toolbarWidgets;  // owned items, deleted on rebuild
     QToolButton *m_bookmarksButton = nullptr;
     QToolButton *m_aiButton = nullptr;
-    QToolButton *m_aiEyeButton = nullptr;
     QToolButton *m_ramButton = nullptr;
     QToolButton *m_keyButton = nullptr;
-    bool m_aiPageContext = false;
     QWidget *m_groupStrip = nullptr;
     QHBoxLayout *m_groupStripLayout = nullptr;
     UrlBar *m_urlBar = nullptr;

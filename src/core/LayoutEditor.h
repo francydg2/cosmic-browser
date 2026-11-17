@@ -28,6 +28,7 @@ public:
     bool setUrlMaxWidth(int maxWidth);
     bool setUrlColor(const QString &color);
     bool setTabPosition(const QString &position);
+    bool setTabWidth(int width);
     bool setTabHeight(int height);
     bool setTabRadius(int radius);
     bool setTabSpacing(int spacing);

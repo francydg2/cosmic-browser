@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.francydg2.cosmic</id>
+  <name>Cosmic</name>
+  <summary>A customizable desktop web browser focused on privacy</summary>
+  <developer id="io.github.francydg2">
+    <name>francydg2</name>
+  </developer>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>Cosmic is a Chromium-based desktop browser built with Qt. It gives you control over how you browse and organize the web.</p>
+    <ul>
+      <li>Organize browsing with tabs, tab groups, profiles, and restorable sessions.</li>
+      <li>Customize the toolbar, appearance, search engines, and new-tab page.</li>
+      <li>Manage site permissions, cookies, HTTPS-only mode, and request blocking.</li>
+      <li>Store credentials in an encrypted vault on your device.</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.francydg2.cosmic.desktop</launchable>
+  <provides>
+    <binary>cosmic</binary>
+  </provides>
+  <categories>
+    <category>Network</category>
+    <category>WebBrowser</category>
+  </categories>
+  <keywords>
+    <keyword>browser</keyword>
+    <keyword>web</keyword>
+    <keyword>privacy</keyword>
+  </keywords>
+  <content_rating type="oars-1.1"/>
+  <url type="homepage">https://francydg2.github.io/cosmic-browser/</url>
+  <url type="bugtracker">https://github.com/francydg2/cosmic-browser/issues</url>
+  <releases>
+    <release version="0.1.2" date="2026-11-17"/>
+  </releases>
+</component>

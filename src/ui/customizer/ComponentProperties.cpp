@@ -292,6 +292,14 @@ void ComponentProperties::showTabs()
             m_editor->setTabPosition(position->itemData(row).toString());
         }
     });
+    auto *width = makeSpin(m_editArea, QStringLiteral("propTabWidthSpin"), 180, 420);
+    width->setValue(cfg.tabs.tabWidth);
+    width->setToolTip(tr("Width of the vertical tab bar."));
+    connect(width, &QSpinBox::valueChanged, this, [this](int value) {
+        if (m_editor) {
+            m_editor->setTabWidth(value);
+        }
+    });
     auto *height = makeSpin(m_editArea, QStringLiteral("propTabHeightSpin"), 32, 48);
     height->setValue(cfg.tabs.tabHeight);
     height->setToolTip(tr("Tab height."));
@@ -325,6 +333,7 @@ void ComponentProperties::showTabs()
         }
     });
     m_editForm->addRow(tr("Position:"), position);
+    m_editForm->addRow(tr("Vertical bar width:"), width);
     m_editForm->addRow(tr("Tab height:"), height);
     m_editForm->addRow(tr("Tab radius:"), radius);
     m_editForm->addRow(tr("Tab spacing:"), spacing);

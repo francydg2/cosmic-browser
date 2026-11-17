@@ -21,6 +21,7 @@ public:
 
     bool load();
     bool save() const;
+    bool importHtml(const QString &filePath, int *imported, QString *error = nullptr);
 
     QString filePath() const { return m_path; }
 

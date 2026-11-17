@@ -90,6 +90,8 @@ private:
 
     QComboBox *m_engineCombo = nullptr;
     QLineEdit *m_customEdit = nullptr;
+    QLabel *m_engineSummaryLabel = nullptr;
+    QLabel *m_searchPreviewLabel = nullptr;
     QCheckBox *m_blockingCheck = nullptr;
     QLabel *m_blockedLabel = nullptr;
     QCheckBox *m_sessionCheck = nullptr;

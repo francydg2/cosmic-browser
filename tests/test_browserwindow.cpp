@@ -48,6 +48,7 @@
 #include "ui/TabContent.h"
 #include "ui/TabWidget.h"
 #include "ui/UrlBar.h"
+#include "ui/WelcomeDialog.h"
 #include "ui/customizer/ComponentLibrary.h"
 #include "ui/customizer/CustomizerPreview.h"
 #include "ui/customizer/CustomizerWindow.h"
@@ -58,6 +59,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QLineEdit>
+#include <QStackedWidget>
 #include <QTemporaryDir>
 
 namespace {
@@ -115,7 +117,9 @@ class TestBrowserWindow : public QObject
 
 private slots:
     void freshTabShowsNewTabPage();
+    void homeActionReturnsToStartPage();
     void newTabPageTracksBookmarks();
+    void newTabPagePrivacyBadgeUpdates();
     void openUrlReusesPristineTab();
     void httpsNavigationThroughGui();
     void openCloseReopenTabs();
@@ -125,6 +129,7 @@ private slots:
     void settingsTabAppliesChanges();
     void usersAndSwitching();
     void settingsTabUsers();
+    void welcomeWizardPresentsSetupSteps();
     void toolbarActionsCluster();
     void verticalTabsAndNewTabButton();
     void ramSaverToggle();
@@ -156,6 +161,28 @@ void TestBrowserWindow::freshTabShowsNewTabPage()
     QVERIFY(!tab->isShowingCrash());
     QVERIFY(tab->newTabPage() != nullptr);
     QVERIFY(tab->webView() != nullptr);
+
+    delete window;
+}
+
+void TestBrowserWindow::homeActionReturnsToStartPage()
+{
+    deleteAllBrowserWindows();
+    Browser browser;
+    BrowserWindow *window = makeWindow(browser);
+    QVERIFY(window);
+    TabContent *tab = window->currentTab();
+    QVERIFY(tab);
+
+    const QUrl url(QStringLiteral("data:text/html,<title>Daily page</title>"));
+    tab->webView()->webPage()->setUrl(url);
+    QTRY_VERIFY(!tab->isShowingNewTab());
+
+    QAction *homeAction = findAction(window, QStringLiteral("nav.home"));
+    QVERIFY(homeAction);
+    QVERIFY(homeAction->isEnabled());
+    homeAction->trigger();
+    QVERIFY(tab->isShowingNewTab());
 
     delete window;
 }
@@ -194,6 +221,21 @@ void TestBrowserWindow::newTabPageTracksBookmarks()
              initialCount);
 
     delete window;
+}
+
+void TestBrowserWindow::newTabPagePrivacyBadgeUpdates()
+{
+    NewTabPage page;
+    QLabel *badge = page.findChild<QLabel *>(QStringLiteral("ntpPrivacyBadge"));
+    QVERIFY(badge);
+
+    page.setPrivacyStatus(false, 12);
+    QVERIFY(!badge->property("protectionActive").toBool());
+    QVERIFY(badge->text().contains(QStringLiteral("paused")));
+
+    page.setPrivacyStatus(true, 12);
+    QVERIFY(badge->property("protectionActive").toBool());
+    QVERIFY(badge->text().contains(QStringLiteral("12")));
 }
 
 void TestBrowserWindow::openUrlReusesPristineTab()
@@ -406,6 +448,23 @@ void TestBrowserWindow::settingsTabAppliesChanges()
     auto *combo = form->findChild<QComboBox *>(QStringLiteral("engineCombo"));
     QVERIFY(combo);
     QCOMPARE(combo->currentData().toString(), QStringLiteral("duckduckgo"));
+    auto *customTemplate = form->findChild<QLineEdit *>(
+        QStringLiteral("customTemplateEdit"));
+    QVERIFY(customTemplate);
+    auto *searchPreview =
+        form->findChild<QLabel *>(QStringLiteral("searchPreviewLabel"));
+    QVERIFY(searchPreview);
+    QVERIFY(searchPreview->text().contains(QStringLiteral("duckduckgo.com")));
+
+    combo->setCurrentIndex(combo->findData(QStringLiteral("custom")));
+    QVERIFY(customTemplate->isEnabled());
+    customTemplate->setText(QStringLiteral("not a search URL"));
+    QVERIFY(!searchPreview->property("previewValid").toBool());
+    customTemplate->setText(QStringLiteral("https://search.example/?q=%1"));
+    QVERIFY(searchPreview->property("previewValid").toBool());
+    QVERIFY(searchPreview->text().contains(QStringLiteral("search.example")));
+    QVERIFY(searchPreview->text().contains(QStringLiteral("cosmic")));
+    QVERIFY(searchPreview->text().contains(QStringLiteral("browser")));
 
     auto *blocking = form->findChild<QCheckBox *>(QStringLiteral("blockingCheck"));
     QVERIFY(blocking);
@@ -573,7 +632,7 @@ void TestBrowserWindow::settingsTabUsers()
     QCOMPARE(window->tabWidget()->currentWidget(), form);
     auto *tabs = form->findChild<QTabWidget *>(QStringLiteral("settingsTabs"));
     QVERIFY(tabs);
-    QCOMPARE(tabs->count(), 7);
+    QCOMPARE(tabs->count(), 8);
     auto *usersPage = form->findChild<QWidget *>(QStringLiteral("settingsTabUsers"));
     QVERIFY(usersPage);
     const int usersIndex = tabs->indexOf(usersPage);
@@ -667,6 +726,33 @@ void TestBrowserWindow::settingsTabUsers()
     deleteAllBrowserWindows();
 }
 
+void TestBrowserWindow::welcomeWizardPresentsSetupSteps()
+{
+    deleteAllBrowserWindows();
+    Browser browser;
+    BrowserWindow *window = makeWindow(browser);
+    QVERIFY(window);
+
+    WelcomeDialog welcome(&browser, window, nullptr);
+    auto *pages = welcome.findChild<QStackedWidget *>(QStringLiteral("welcomePages"));
+    QVERIFY(pages);
+    QCOMPARE(pages->count(), 5);
+    QCOMPARE(pages->currentIndex(), 0);
+
+    auto *next = welcome.findChild<QPushButton *>(QStringLiteral("welcomeNextButton"));
+    auto *back = welcome.findChild<QPushButton *>(QStringLiteral("welcomeBackButton"));
+    QVERIFY(next);
+    QVERIFY(back);
+    next->click();
+    QCOMPARE(pages->currentIndex(), 1);
+    next->click();
+    QCOMPARE(pages->currentIndex(), 2);
+    back->click();
+    QCOMPARE(pages->currentIndex(), 1);
+
+    deleteAllBrowserWindows();
+}
+
 void TestBrowserWindow::toolbarActionsCluster()
 {
     deleteAllBrowserWindows();
@@ -687,9 +773,8 @@ void TestBrowserWindow::toolbarActionsCluster()
     QVERIFY(aiButton);
     QVERIFY(aiButton->menu() != nullptr);
     QVERIFY(findAction(window, QStringLiteral("ai.open.claude")));
-    auto *eye = window->findChild<QToolButton *>(QStringLiteral("aiEyeButton"));
-    QVERIFY(eye);
-    QVERIFY(!eye->isChecked());
+    QVERIFY(!window->findChild<QToolButton *>(QStringLiteral("aiEyeButton")));
+    QVERIFY(!findAction(window, QStringLiteral("ai.pageContext")));
     QVERIFY(window->findChild<QToolButton *>(QStringLiteral("ramButton")));
     QVERIFY(window->findChild<QToolButton *>(QStringLiteral("keyButton")));
     auto *gear = window->findChild<QToolButton *>(QStringLiteral("settingsButton"));
@@ -723,12 +808,6 @@ void TestBrowserWindow::toolbarActionsCluster()
     QVERIFY(passwordsPage);
     QCOMPARE(tabs->currentIndex(), tabs->indexOf(passwordsPage));
 
-    // The eye toggle mirrors the registry action.
-    eye->setChecked(true);
-    QVERIFY(findAction(window, QStringLiteral("ai.pageContext"))->isChecked());
-    eye->setChecked(false);
-    QVERIFY(!findAction(window, QStringLiteral("ai.pageContext"))->isChecked());
-
     QFile::remove(browser.bookmarks()->filePath());
     QFile::remove(browser.settings()->filePath());
     deleteAllBrowserWindows();
@@ -737,6 +816,7 @@ void TestBrowserWindow::toolbarActionsCluster()
 void TestBrowserWindow::verticalTabsAndNewTabButton()
 {
     deleteAllBrowserWindows();
+    QFile::remove(UiLayout::configFilePath());
     Browser browser;
     BrowserWindow *window = makeWindow(browser);
     QVERIFY(window);
@@ -756,13 +836,32 @@ void TestBrowserWindow::verticalTabsAndNewTabButton()
     browser.settings()->setTabPosition(QStringLiteral("vertical"));
     QTest::qWait(50);
     QCOMPARE(window->tabWidget()->tabPosition(), QTabWidget::West);
+    QVERIFY(bar->property("verticalTabs").toBool());
     plusRect = bar->newTabButtonRect();
     QVERIFY(!plusRect.isEmpty());
     QVERIFY(bar->rect().contains(plusRect));
+    const int verticalTabsBefore = window->tabCount();
+    QTest::mouseClick(bar, Qt::LeftButton, {}, plusRect.center());
+    QCOMPARE(window->tabCount(), verticalTabsBefore + 1);
+
+    const int initialWidth = bar->width();
+    const QPoint dragStart(bar->width() - 2, bar->height() / 2);
+    const QPoint dragEnd = dragStart + QPoint(40, 0);
+    QTest::mousePress(bar, Qt::LeftButton, {}, dragStart);
+    QTest::mouseMove(bar, dragEnd, 20);
+    QTest::mouseRelease(bar, Qt::LeftButton, {}, dragEnd);
+    QCOMPARE(bar->verticalTabWidth(), initialWidth + 40);
+    QCOMPARE(browser.uiConfiguration().tabs.tabWidth, initialWidth + 40);
+    UIConfiguration saved;
+    QVERIFY(UiLayout::loadFile(UiLayout::configFilePath(), &saved));
+    QCOMPARE(saved.tabs.tabWidth, initialWidth + 40);
 
     browser.settings()->setTabPosition(QStringLiteral("horizontal"));
     QCOMPARE(window->tabWidget()->tabPosition(), QTabWidget::North);
+    QVERIFY(!bar->property("verticalTabs").toBool());
+    QCOMPARE(bar->maximumWidth(), QWIDGETSIZE_MAX);
     deleteAllBrowserWindows();
+    QFile::remove(UiLayout::configFilePath());
 }
 
 void TestBrowserWindow::ramSaverToggle()
@@ -1255,13 +1354,19 @@ void TestBrowserWindow::customizerMoveSaveApply()
 
     auto *toolbar = window->findChild<QToolBar *>(QStringLiteral("navToolbar"));
     QVERIFY(toolbar);
-    QVERIFY(toolbar->actions().size() >= 4);
+    QVERIFY(toolbar->actions().size() >= 5);
     QVERIFY(toolbar->actions().at(0) == findAction(window, QStringLiteral("nav.back")));
     QVERIFY(toolbar->actions().at(1)
             == findAction(window, QStringLiteral("nav.forward")));
     QVERIFY(toolbar->actions().at(2) == findAction(window, QStringLiteral("nav.reload")));
-    QCOMPARE(toolbar->widgetForAction(toolbar->actions().at(3))->objectName(),
-             QStringLiteral("settingsButton"));
+    QToolButton *settingsButton =
+        window->findChild<QToolButton *>(QStringLiteral("settingsButton"));
+    QVERIFY(settingsButton);
+    bool settingsButtonInToolbar = false;
+    for (QAction *action : toolbar->actions()) {
+        settingsButtonInToolbar |= toolbar->widgetForAction(action) == settingsButton;
+    }
+    QVERIFY(settingsButtonInToolbar);
 
     UIConfiguration onDisk;
     QVERIFY(UiLayout::loadFile(UiLayout::configFilePath(), &onDisk));
@@ -1337,7 +1442,7 @@ void TestBrowserWindow::customizerPropertiesApply()
     QCOMPARE(browser.uiConfiguration().toolbar.height, 60);
     auto *toolbar = window->findChild<QToolBar *>(QStringLiteral("navToolbar"));
     QVERIFY(toolbar);
-    QCOMPARE(toolbar->iconSize(), QSize(20, 20));
+    QCOMPARE(toolbar->iconSize(), QSize(22, 22));
     auto *urlBar = window->findChild<QLineEdit *>(QStringLiteral("urlBar"));
     QVERIFY(urlBar);
     QCOMPARE(urlBar->minimumHeight(), 44);

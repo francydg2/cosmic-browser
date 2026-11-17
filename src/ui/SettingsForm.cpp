@@ -69,6 +69,32 @@ void selectPermissionCombo(QComboBox *combo, const QString &policy)
     combo->setCurrentIndex(index >= 0 ? index : 0);
 }
 
+QWidget *makeSettingsIntro(QWidget *parent, const QString &title,
+                           const QString &description)
+{
+    auto *intro = new QWidget(parent);
+    intro->setObjectName(QStringLiteral("settingsIntro"));
+    auto *layout = new QVBoxLayout(intro);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(4);
+
+    auto *heading = new QLabel(title, intro);
+    heading->setObjectName(QStringLiteral("settingsPageTitle"));
+    auto *summary = new QLabel(description, intro);
+    summary->setObjectName(QStringLiteral("settingsPageDescription"));
+    summary->setWordWrap(true);
+    layout->addWidget(heading);
+    layout->addWidget(summary);
+    return intro;
+}
+
+QWidget *makeSettingsCard(QWidget *parent)
+{
+    auto *card = new QWidget(parent);
+    card->setObjectName(QStringLiteral("settingsCard"));
+    return card;
+}
+
 } // namespace
 
 SettingsForm::SettingsForm(Settings *settings, BlocklistInterceptor *interceptor,
@@ -85,21 +111,39 @@ SettingsForm::SettingsForm(Settings *settings, BlocklistInterceptor *interceptor
     setObjectName(QStringLiteral("settingsForm"));
 
     auto *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
     auto *tabs = new QTabWidget(this);
     tabs->setObjectName(QStringLiteral("settingsTabs"));
+    tabs->setDocumentMode(true);
+    tabs->setUsesScrollButtons(true);
+    tabs->setIconSize(QSize(17, 17));
     m_sections = tabs;
 
     // --- General ----------------------------------------------------------
     auto *generalPage = new QWidget(tabs);
     generalPage->setObjectName(QStringLiteral("settingsTabGeneral"));
     auto *generalForm = new QVBoxLayout(generalPage);
-    generalForm->setSpacing(10);
-    generalForm->setContentsMargins(12, 12, 12, 12);
+    generalForm->setSpacing(16);
+    generalForm->setContentsMargins(24, 22, 24, 22);
+    generalForm->addWidget(makeSettingsIntro(
+        generalPage, tr("General"),
+        tr("Set up how Cosmic starts and behaves in everyday browsing.")));
 
     m_sessionCheck = new QCheckBox(tr("Restore previous session on startup"), generalPage);
     m_sessionCheck->setObjectName(QStringLiteral("sessionRestoreCheck"));
 
-    generalForm->addWidget(m_sessionCheck);
+    auto *sessionCard = makeSettingsCard(generalPage);
+    auto *sessionLayout = new QVBoxLayout(sessionCard);
+    sessionLayout->setContentsMargins(18, 16, 18, 16);
+    sessionLayout->setSpacing(8);
+    sessionLayout->addWidget(m_sessionCheck);
+    auto *sessionHint = new QLabel(
+        tr("Reopen your tabs from the last session when Cosmic starts."), sessionCard);
+    sessionHint->setObjectName(QStringLiteral("settingsHelpText"));
+    sessionHint->setWordWrap(true);
+    sessionLayout->addWidget(sessionHint);
+    generalForm->addWidget(sessionCard);
     generalForm->addStretch(1);
     tabs->addTab(generalPage, QIcon(QStringLiteral(":/icons/gear.svg")),
                  tr("General"));
@@ -107,12 +151,16 @@ SettingsForm::SettingsForm(Settings *settings, BlocklistInterceptor *interceptor
     // --- Search engine ----------------------------------------------------
     auto *searchPage = new QWidget(tabs);
     searchPage->setObjectName(QStringLiteral("settingsTabSearch"));
-    auto *searchForm = new QFormLayout(searchPage);
-    searchForm->setSpacing(10);
-    searchForm->setContentsMargins(12, 12, 12, 12);
+    auto *searchForm = new QVBoxLayout(searchPage);
+    searchForm->setSpacing(16);
+    searchForm->setContentsMargins(24, 22, 24, 22);
+    searchForm->addWidget(makeSettingsIntro(
+        searchPage, tr("Search"),
+        tr("Choose where Cosmic searches when you type a query in the address bar or start page.")));
 
     m_engineCombo = new QComboBox(searchPage);
     m_engineCombo->setObjectName(QStringLiteral("engineCombo"));
+    m_engineCombo->setMinimumHeight(40);
     const auto engines = SearchEngines::builtins();
     for (const SearchEngine &engine : engines) {
         m_engineCombo->addItem(engine.name, engine.id);
@@ -123,9 +171,51 @@ SettingsForm::SettingsForm(Settings *settings, BlocklistInterceptor *interceptor
     m_customEdit->setObjectName(QStringLiteral("customTemplateEdit"));
     m_customEdit->setPlaceholderText(tr("https://example.com/search?q=%1"));
     m_customEdit->setClearButtonEnabled(true);
+    m_customEdit->setMinimumHeight(40);
 
-    searchForm->addRow(tr("Search engine:"), m_engineCombo);
-    searchForm->addRow(tr("Custom template:"), m_customEdit);
+    auto *engineCard = makeSettingsCard(searchPage);
+    auto *engineLayout = new QVBoxLayout(engineCard);
+    engineLayout->setContentsMargins(18, 16, 18, 16);
+    engineLayout->setSpacing(9);
+    auto *engineTitle = new QLabel(tr("Default search engine"), engineCard);
+    engineTitle->setObjectName(QStringLiteral("settingsSectionTitle"));
+    auto *engineHint = new QLabel(
+        tr("Pick a provider or choose Custom to use your own search URL."), engineCard);
+    engineHint->setObjectName(QStringLiteral("settingsHelpText"));
+    engineHint->setWordWrap(true);
+    m_engineSummaryLabel = new QLabel(engineCard);
+    m_engineSummaryLabel->setObjectName(QStringLiteral("searchEngineSummary"));
+    m_engineSummaryLabel->setWordWrap(true);
+    engineLayout->addWidget(engineTitle);
+    engineLayout->addWidget(engineHint);
+    engineLayout->addWidget(m_engineCombo);
+    engineLayout->addWidget(m_engineSummaryLabel);
+    searchForm->addWidget(engineCard);
+
+    auto *customCard = makeSettingsCard(searchPage);
+    auto *customLayout = new QVBoxLayout(customCard);
+    customLayout->setContentsMargins(18, 16, 18, 16);
+    customLayout->setSpacing(9);
+    auto *customTitle = new QLabel(tr("Custom search URL"), customCard);
+    customTitle->setObjectName(QStringLiteral("settingsSectionTitle"));
+    auto *customHint = new QLabel(
+        tr("Include %1 where Cosmic should insert your search terms.")
+            .arg(QStringLiteral("%1")),
+        customCard);
+    customHint->setObjectName(QStringLiteral("settingsHelpText"));
+    customHint->setWordWrap(true);
+    auto *previewTitle = new QLabel(tr("Example destination"), customCard);
+    previewTitle->setObjectName(QStringLiteral("searchPreviewTitle"));
+    m_searchPreviewLabel = new QLabel(customCard);
+    m_searchPreviewLabel->setObjectName(QStringLiteral("searchPreviewLabel"));
+    m_searchPreviewLabel->setWordWrap(true);
+    customLayout->addWidget(customTitle);
+    customLayout->addWidget(customHint);
+    customLayout->addWidget(m_customEdit);
+    customLayout->addWidget(previewTitle);
+    customLayout->addWidget(m_searchPreviewLabel);
+    searchForm->addWidget(customCard);
+    searchForm->addStretch(1);
     tabs->addTab(searchPage, QIcon(QStringLiteral(":/icons/search.svg")),
                  tr("Search engine"));
 
@@ -133,8 +223,11 @@ SettingsForm::SettingsForm(Settings *settings, BlocklistInterceptor *interceptor
     auto *privacyPage = new QWidget(tabs);
     privacyPage->setObjectName(QStringLiteral("settingsTabPrivacy"));
     auto *privacyForm = new QVBoxLayout(privacyPage);
-    privacyForm->setSpacing(10);
-    privacyForm->setContentsMargins(12, 12, 12, 12);
+    privacyForm->setSpacing(14);
+    privacyForm->setContentsMargins(24, 22, 24, 22);
+    privacyForm->addWidget(makeSettingsIntro(
+        privacyPage, tr("Privacy and protection"),
+        tr("Choose what Cosmic blocks and how websites can access your device.")));
 
     m_blockingCheck = new QCheckBox(tr("Block ad/tracker requests (domain level)"), privacyPage);
     m_blockingCheck->setObjectName(QStringLiteral("blockingCheck"));
@@ -171,12 +264,30 @@ SettingsForm::SettingsForm(Settings *settings, BlocklistInterceptor *interceptor
     permForm->addRow(tr("Camera && microphone:"), m_mediaPermCombo);
     permForm->addRow(tr("Notifications:"), m_notificationsPermCombo);
 
-    privacyForm->addWidget(m_blockingCheck);
-    privacyForm->addWidget(m_blockedLabel);
-    privacyForm->addWidget(m_dntCheck);
-    privacyForm->addWidget(m_sessionCookiesCheck);
-    privacyForm->addWidget(permLabel);
-    privacyForm->addLayout(permForm);
+    auto *shieldCard = makeSettingsCard(privacyPage);
+    auto *shieldLayout = new QVBoxLayout(shieldCard);
+    shieldLayout->setContentsMargins(18, 16, 18, 16);
+    shieldLayout->setSpacing(8);
+    shieldLayout->addWidget(m_blockingCheck);
+    shieldLayout->addWidget(m_blockedLabel);
+
+    auto *trackingCard = makeSettingsCard(privacyPage);
+    auto *trackingLayout = new QVBoxLayout(trackingCard);
+    trackingLayout->setContentsMargins(18, 16, 18, 16);
+    trackingLayout->setSpacing(12);
+    trackingLayout->addWidget(m_dntCheck);
+    trackingLayout->addWidget(m_sessionCookiesCheck);
+
+    auto *permissionCard = makeSettingsCard(privacyPage);
+    auto *permissionLayout = new QVBoxLayout(permissionCard);
+    permissionLayout->setContentsMargins(18, 16, 18, 16);
+    permissionLayout->setSpacing(10);
+    permissionLayout->addWidget(permLabel);
+    permissionLayout->addLayout(permForm);
+
+    privacyForm->addWidget(shieldCard);
+    privacyForm->addWidget(trackingCard);
+    privacyForm->addWidget(permissionCard);
     privacyForm->addStretch(1);
     tabs->addTab(privacyPage, QIcon(QStringLiteral(":/icons/lock.svg")),
                  tr("Privacy"));
@@ -193,8 +304,11 @@ SettingsForm::SettingsForm(Settings *settings, BlocklistInterceptor *interceptor
     auto *usersPage = new QWidget(tabs);
     usersPage->setObjectName(QStringLiteral("settingsTabUsers"));
     auto *usersLayout = new QVBoxLayout(usersPage);
-    usersLayout->setSpacing(10);
-    usersLayout->setContentsMargins(12, 12, 12, 12);
+    usersLayout->setSpacing(14);
+    usersLayout->setContentsMargins(24, 22, 24, 22);
+    usersLayout->addWidget(makeSettingsIntro(
+        usersPage, tr("Profiles"),
+        tr("Keep browsing sessions, cookies and logins separate for each profile.")));
 
     auto *usersHint = new QLabel(
         tr("Users keep separate tabs, cookies and logins. Switching user "
@@ -232,8 +346,11 @@ SettingsForm::SettingsForm(Settings *settings, BlocklistInterceptor *interceptor
     auto *updatesPage = new QWidget(tabs);
     updatesPage->setObjectName(QStringLiteral("settingsTabUpdates"));
     auto *updatesLayout = new QVBoxLayout(updatesPage);
-    updatesLayout->setSpacing(10);
-    updatesLayout->setContentsMargins(12, 12, 12, 12);
+    updatesLayout->setSpacing(16);
+    updatesLayout->setContentsMargins(24, 22, 24, 22);
+    updatesLayout->addWidget(makeSettingsIntro(
+        updatesPage, tr("Updates"),
+        tr("Keep Cosmic current and find the right download for your system.")));
 
     m_updateVersionLabel = new QLabel(
         tr("Installed version: %1").arg(QCoreApplication::applicationVersion()),
@@ -265,11 +382,16 @@ SettingsForm::SettingsForm(Settings *settings, BlocklistInterceptor *interceptor
     auto *downloadSiteButton = new QPushButton(tr("Open Cosmic download site"), updatesPage);
     downloadSiteButton->setObjectName(QStringLiteral("downloadSiteButton"));
 
-    updatesLayout->addWidget(m_updateVersionLabel);
-    updatesLayout->addWidget(updatesHint);
-    updatesLayout->addWidget(m_updateStatusLabel);
-    updatesLayout->addLayout(updateButtons);
-    updatesLayout->addWidget(downloadSiteButton, 0, Qt::AlignLeft);
+    auto *updateCard = makeSettingsCard(updatesPage);
+    auto *updateCardLayout = new QVBoxLayout(updateCard);
+    updateCardLayout->setContentsMargins(18, 16, 18, 16);
+    updateCardLayout->setSpacing(10);
+    updateCardLayout->addWidget(m_updateVersionLabel);
+    updateCardLayout->addWidget(updatesHint);
+    updateCardLayout->addWidget(m_updateStatusLabel);
+    updateCardLayout->addLayout(updateButtons);
+    updateCardLayout->addWidget(downloadSiteButton, 0, Qt::AlignLeft);
+    updatesLayout->addWidget(updateCard);
     updatesLayout->addStretch(1);
     tabs->addTab(updatesPage, QIcon(QStringLiteral(":/icons/gear.svg")), tr("Updates"));
 
@@ -288,8 +410,10 @@ SettingsForm::SettingsForm(Settings *settings, BlocklistInterceptor *interceptor
 
     layout->addWidget(tabs, 1);
 
-    auto *actionRow = new QHBoxLayout;
-    actionRow->setContentsMargins(12, 0, 12, 12);
+    auto *actionBar = new QWidget(this);
+    actionBar->setObjectName(QStringLiteral("settingsActionBar"));
+    auto *actionRow = new QHBoxLayout(actionBar);
+    actionRow->setContentsMargins(20, 10, 20, 14);
     actionRow->setSpacing(8);
     m_statusLabel = new QLabel(this);
     m_statusLabel->setObjectName(QStringLiteral("settingsStatusLabel"));
@@ -305,7 +429,7 @@ SettingsForm::SettingsForm(Settings *settings, BlocklistInterceptor *interceptor
     actionRow->addWidget(m_statusLabel, 1);
     actionRow->addWidget(m_resetButton);
     actionRow->addWidget(m_saveButton);
-    layout->addLayout(actionRow);
+    layout->addWidget(actionBar);
 
     load();
 
@@ -322,6 +446,8 @@ SettingsForm::SettingsForm(Settings *settings, BlocklistInterceptor *interceptor
     }
 
     connect(m_engineCombo, &QComboBox::currentIndexChanged, this,
+            &SettingsForm::syncCustomTemplateState);
+    connect(m_customEdit, &QLineEdit::textChanged, this,
             &SettingsForm::syncCustomTemplateState);
     syncCustomTemplateState();
 
@@ -464,8 +590,11 @@ QWidget *SettingsForm::buildAdvancedPage(QTabWidget *tabs)
     auto *page = new QWidget(tabs);
     page->setObjectName(QStringLiteral("settingsTabAdvanced"));
     auto *form = new QVBoxLayout(page);
-    form->setSpacing(10);
-    form->setContentsMargins(12, 12, 12, 12);
+    form->setSpacing(16);
+    form->setContentsMargins(24, 22, 24, 22);
+    form->addWidget(makeSettingsIntro(
+        page, tr("Advanced"),
+        tr("Manage secure connections and local browsing data.")));
 
     m_httpsOnlyCheck = new QCheckBox(tr("Upgrade http:// pages to https://"), page);
     m_httpsOnlyCheck->setObjectName(QStringLiteral("httpsOnlyCheck"));
@@ -492,10 +621,25 @@ QWidget *SettingsForm::buildAdvancedPage(QTabWidget *tabs)
     resetButton->setToolTip(tr("Reset every setting on this page to its built-in default."));
     connect(resetButton, &QPushButton::clicked, this, &SettingsForm::resetDefaults);
 
-    form->addWidget(m_httpsOnlyCheck);
-    form->addWidget(httpsHint);
-    form->addWidget(m_clearDataButton);
-    form->addWidget(resetButton);
+    auto *securityCard = makeSettingsCard(page);
+    auto *securityLayout = new QVBoxLayout(securityCard);
+    securityLayout->setContentsMargins(18, 16, 18, 16);
+    securityLayout->setSpacing(8);
+    securityLayout->addWidget(m_httpsOnlyCheck);
+    securityLayout->addWidget(httpsHint);
+
+    auto *dataCard = makeSettingsCard(page);
+    auto *dataLayout = new QVBoxLayout(dataCard);
+    dataLayout->setContentsMargins(18, 16, 18, 16);
+    dataLayout->setSpacing(10);
+    auto *dataTitle = new QLabel(tr("Browsing data"), dataCard);
+    dataTitle->setObjectName(QStringLiteral("settingsSectionTitle"));
+    dataLayout->addWidget(dataTitle);
+    dataLayout->addWidget(m_clearDataButton, 0, Qt::AlignLeft);
+    dataLayout->addWidget(resetButton, 0, Qt::AlignLeft);
+
+    form->addWidget(securityCard);
+    form->addWidget(dataCard);
     form->addStretch(1);
     return page;
 }
@@ -505,8 +649,11 @@ QWidget *SettingsForm::buildAppearancePage(QTabWidget *tabs)
     auto *page = new QWidget(tabs);
     page->setObjectName(QStringLiteral("settingsTabAppearance"));
     auto *form = new QVBoxLayout(page);
-    form->setSpacing(10);
-    form->setContentsMargins(12, 12, 12, 12);
+    form->setSpacing(16);
+    form->setContentsMargins(24, 22, 24, 22);
+    form->addWidget(makeSettingsIntro(
+        page, tr("Appearance"),
+        tr("Make the browser feel right for you, from its accent to its tabs.")));
 
     auto *accentLabel = new QLabel(tr("Accent color:"), page);
     accentLabel->setObjectName(QStringLiteral("accentLabel"));
@@ -571,10 +718,25 @@ QWidget *SettingsForm::buildAppearancePage(QTabWidget *tabs)
         customizer->show();
     });
 
-    form->addWidget(accentLabel);
-    form->addLayout(swatchRow);
-    form->addLayout(tabsForm);
-    form->addWidget(customizeButton);
+    auto *colorCard = makeSettingsCard(page);
+    auto *colorLayout = new QVBoxLayout(colorCard);
+    colorLayout->setContentsMargins(18, 16, 18, 16);
+    colorLayout->setSpacing(10);
+    colorLayout->addWidget(accentLabel);
+    colorLayout->addLayout(swatchRow);
+
+    auto *layoutCard = makeSettingsCard(page);
+    auto *layoutCardLayout = new QVBoxLayout(layoutCard);
+    layoutCardLayout->setContentsMargins(18, 16, 18, 16);
+    layoutCardLayout->setSpacing(10);
+    auto *tabsTitle = new QLabel(tr("Browser layout"), layoutCard);
+    tabsTitle->setObjectName(QStringLiteral("settingsSectionTitle"));
+    layoutCardLayout->addWidget(tabsTitle);
+    layoutCardLayout->addLayout(tabsForm);
+    layoutCardLayout->addWidget(customizeButton, 0, Qt::AlignLeft);
+
+    form->addWidget(colorCard);
+    form->addWidget(layoutCard);
     form->addStretch(1);
     return page;
 }
@@ -584,8 +746,11 @@ QWidget *SettingsForm::buildPasswordsPage(QTabWidget *tabs)
     auto *page = new QWidget(tabs);
     page->setObjectName(QStringLiteral("settingsTabPasswords"));
     auto *form = new QVBoxLayout(page);
-    form->setSpacing(10);
-    form->setContentsMargins(12, 12, 12, 12);
+    form->setSpacing(14);
+    form->setContentsMargins(24, 22, 24, 22);
+    form->addWidget(makeSettingsIntro(
+        page, tr("Password vault"),
+        tr("Save and manage credentials locally in your encrypted vault.")));
 
     m_vaultStatusLabel = new QLabel(page);
     m_vaultStatusLabel->setObjectName(QStringLiteral("vaultStatusLabel"));
@@ -681,10 +846,21 @@ QWidget *SettingsForm::buildPasswordsPage(QTabWidget *tabs)
     hint->setWordWrap(true);
     hint->setStyleSheet(QStringLiteral("color: #7d8290;"));
 
-    form->addWidget(m_vaultStatusLabel);
-    form->addLayout(masterRow);
-    form->addWidget(m_vaultPanel, 1);
-    form->addWidget(hint);
+    auto *vaultCard = makeSettingsCard(page);
+    auto *vaultCardLayout = new QVBoxLayout(vaultCard);
+    vaultCardLayout->setContentsMargins(18, 16, 18, 16);
+    vaultCardLayout->setSpacing(10);
+    vaultCardLayout->addWidget(m_vaultStatusLabel);
+    vaultCardLayout->addLayout(masterRow);
+    vaultCardLayout->addWidget(m_vaultPanel, 1);
+
+    auto *hintCard = makeSettingsCard(page);
+    auto *hintLayout = new QVBoxLayout(hintCard);
+    hintLayout->setContentsMargins(18, 14, 18, 14);
+    hintLayout->addWidget(hint);
+
+    form->addWidget(vaultCard, 1);
+    form->addWidget(hintCard);
 
     if (!m_vault) {
         m_vaultStatusLabel->setText(tr("Password vault unavailable in this context."));
@@ -938,6 +1114,33 @@ void SettingsForm::syncCustomTemplateState()
     m_customEdit->setEnabled(custom);
     m_customEdit->setToolTip(custom ? tr("Must contain %1 where the query goes.")
                                     : tr("Select “Custom…” to use a custom template."));
+
+    QString urlTemplate;
+    if (custom) {
+        urlTemplate = m_customEdit->text().trimmed();
+        m_engineSummaryLabel->setText(
+            tr("Your custom search URL is active for new searches."));
+    } else if (const SearchEngine *engine =
+                   SearchEngines::builtinById(m_engineCombo->currentData().toString())) {
+        urlTemplate = engine->urlTemplate;
+        m_engineSummaryLabel->setText(
+            tr("New searches will use %1.").arg(engine->name));
+    } else {
+        m_engineSummaryLabel->setText(
+            tr("Choose a search provider to get started."));
+    }
+
+    const bool validTemplate = SearchEngines::isValidTemplate(urlTemplate);
+    m_searchPreviewLabel->setProperty("previewValid", validTemplate);
+    m_searchPreviewLabel->setText(
+        validTemplate
+            ? SearchEngines::buildSearchUrl(urlTemplate, tr("cosmic browser"))
+                  .toDisplayString()
+            : tr("Add an http:// or https:// URL with %1 to see a preview.")
+                  .arg(QStringLiteral("%1")));
+    m_searchPreviewLabel->style()->unpolish(m_searchPreviewLabel);
+    m_searchPreviewLabel->style()->polish(m_searchPreviewLabel);
+    m_searchPreviewLabel->update();
 }
 
 void SettingsForm::refreshUserWidgets()

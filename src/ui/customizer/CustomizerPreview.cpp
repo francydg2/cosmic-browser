@@ -239,6 +239,7 @@ void CustomizerPreview::rebuildChrome()
     m_tabBar = new NebulaTabBar(this);
     m_tabBar->setObjectName(QStringLiteral("previewTabBar"));
     m_tabBar->setShape(vertical ? QTabBar::RoundedWest : QTabBar::RoundedNorth);
+    m_tabBar->setVerticalTabWidth(cfg.tabs.tabWidth);
     m_tabBar->setTabHeight(cfg.tabs.tabHeight);
     m_tabBar->setTabRadius(cfg.tabs.tabRadius);
     m_tabBar->setTabSpacing(cfg.tabs.tabSpacing);

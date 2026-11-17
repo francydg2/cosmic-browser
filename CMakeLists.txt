@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(Cosmic
-    VERSION 0.1.1
+    VERSION 0.1.2
     DESCRIPTION "A privacy-focused, customizable desktop browser"
     LANGUAGES CXX
 )
@@ -40,6 +40,7 @@ set(COSMIC_RESOURCE_FILES
     resources/icons/back.svg
     resources/icons/forward.svg
     resources/icons/reload.svg
+    resources/icons/home.svg
     resources/icons/stop.svg
     resources/icons/gear.svg
     resources/icons/layers.svg
@@ -50,9 +51,9 @@ set(COSMIC_RESOURCE_FILES
     resources/icons/check.svg
     resources/icons/ai.svg
     resources/icons/star.svg
+    resources/icons/star-active.svg
     resources/icons/key.svg
     resources/icons/lock.svg
-    resources/icons/eye.svg
     resources/icons/ram.svg
     resources/icons/folder.svg
     resources/icons/search.svg
@@ -117,6 +118,8 @@ add_library(cosmic_core STATIC
     src/ui/TabWidget.cpp
     src/ui/SettingsForm.h
     src/ui/SettingsForm.cpp
+    src/ui/WelcomeDialog.h
+    src/ui/WelcomeDialog.cpp
     src/ui/customizer/ComponentLibrary.h
     src/ui/customizer/ComponentLibrary.cpp
     src/ui/customizer/ComponentProperties.h

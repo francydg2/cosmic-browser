@@ -131,11 +131,11 @@ jobs:
         shell: pwsh
         run: |
           windeployqt --release --compiler-runtime --no-translations --no-system-d3d-compiler --no-opengl-sw ${{ github.workspace }}/dist/bin/cosmic.exe
-          $crypto = Get-ChildItem "$env:ProgramFiles\OpenSSL\bin\libcrypto-*.dll" |
+          $crypto = Get-ChildItem "$env:OPENSSL_ROOT_DIR\bin\libcrypto-*.dll" |
             Select-Object -First 1
           if (-not $crypto) { throw "OpenSSL libcrypto DLL was not found" }
           Copy-Item $crypto.FullName "${{ github.workspace }}\dist\bin" -Force
-          $ssl = Get-ChildItem "$env:ProgramFiles\OpenSSL\bin\libssl-*.dll" |
+          $ssl = Get-ChildItem "$env:OPENSSL_ROOT_DIR\bin\libssl-*.dll" |
             Select-Object -First 1
           if (-not $ssl) { throw "OpenSSL libssl DLL was not found" }
           Copy-Item $ssl.FullName "${{ github.workspace }}\dist\bin" -Force
@@ -197,6 +197,16 @@ jobs:
             --desktop-file build/appimage/cosmic.desktop \
             --icon-file dist/share/icons/hicolor/512x512/apps/cosmic.png \
             --plugin qt
+          # Use one coherent NSS/NSPR stack from the host instead of bundling
+          # only part of Ubuntu's stack and mixing it with distro modules.
+          nss_libraries=(nss3 nssutil3 smime3 ssl3 softokn3 freebl3 freeblpriv3 nssckbi nssdbm3 nspr4 plc4 plds4)
+          for library in "${nss_libraries[@]}"; do
+            find AppDir \( -type f -o -type l \) -name "lib${library}.so*" -delete
+            if find AppDir \( -type f -o -type l \) -name "lib${library}.so*" -print -quit | grep -q .; then
+              echo "Failed to exclude lib${library}.so from AppImage" >&2
+              exit 1
+            fi
+          done
           rm -f AppDir/AppRun
           cat > AppDir/AppRun <<'EOF'
           #!/bin/sh
@@ -209,6 +219,12 @@ jobs:
           "$RUNNER_TEMP/appimage-tools/linuxdeploy-x86_64.AppImage" \
             --appdir AppDir \
             --output appimage
+          for library in "${nss_libraries[@]}"; do
+            if find AppDir \( -type f -o -type l \) -name "lib${library}.so*" -print -quit | grep -q .; then
+              echo "AppImage packaging reintroduced lib${library}.so" >&2
+              exit 1
+            fi
+          done
           image="$(find . -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
           test -n "$image"
           mv "$image" "cosmic-${APP_VERSION}-linux-x64.AppImage"
@@ -253,6 +269,8 @@ jobs:
             - Browses the web with tabs, pinned tabs, tab groups and multiple user profiles.
             - Searches from the address bar with configurable search engines.
             - Restores browsing sessions and provides bookmarks, including quick links on the new-tab page.
+            - Adds a guided first-run setup with optional HTML bookmark import, privacy controls, performance settings and local profiles.
+            - Refreshes the tab bar, settings and new-tab page with larger, compact bookmark tiles.
             - Offers request blocking, HTTPS-only mode, configurable site permissions and session-only cookies.
             - Includes an encrypted password vault, customizable toolbar and appearance settings.
 
@@ -263,4 +281,5 @@ jobs:
             - **Linux x64:** `cosmic-<version>-linux-x64.AppImage`
 
             The Windows installer is unsigned and may trigger SmartScreen. The macOS app is unsigned and not notarized, so Gatekeeper may warn when opening it.
+            The Linux AppImage uses the system NSS/NSPR libraries for compatibility across distributions.
           files: release-assets/*

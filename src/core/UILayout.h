@@ -12,7 +12,7 @@ struct UiToolbarLayout {
     QList<UiToolbarItem> left;
     QList<UiToolbarItem> center;
     QList<UiToolbarItem> right;
-    int iconSize = 20;
+    int iconSize = 22;
     int spacing = 6;
     int height = 56;
     QString color;
@@ -27,6 +27,7 @@ struct UiUrlBarLayout {
 
 struct UiTabsLayout {
     QString position;
+    int tabWidth = 250;
     int tabHeight = 36;
     int tabRadius = 9;
     int tabSpacing = 6;
@@ -56,7 +57,7 @@ constexpr int kSchemaVersion = 1;
 
 struct UiToolbarMetrics {
     int height = 44;
-    int iconSize = 20;
+    int iconSize = 22;
     int urlHeight = 28;
 };
 

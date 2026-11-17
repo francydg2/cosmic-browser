@@ -7,6 +7,8 @@
 #include <QJsonObject>
 #include <QSaveFile>
 #include <QUuid>
+#include <QRegularExpression>
+#include <QTextDocumentFragment>
 
 namespace {
 
@@ -86,6 +88,68 @@ bool Bookmarks::save() const
         return false;
     }
     qCInfo(lcCosmic).noquote() << "bookmarks saved to" << m_path;
+    return true;
+}
+
+bool Bookmarks::importHtml(const QString &filePath, int *imported, QString *error)
+{
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        if (error) {
+            *error = QStringLiteral("Could not read the selected bookmarks file.");
+        }
+        return false;
+    }
+    if (file.size() > 20 * 1024 * 1024) {
+        if (error) {
+            *error = QStringLiteral("The selected file is too large to import (20 MB maximum).");
+        }
+        return false;
+    }
+
+    const QString html = QString::fromUtf8(file.readAll());
+    const QRegularExpression anchor(
+        QStringLiteral("<a\\b[^>]*\\bhref\\s*=\\s*(['\"])(.*?)\\1[^>]*>(.*?)</a\\s*>"),
+        QRegularExpression::CaseInsensitiveOption
+            | QRegularExpression::DotMatchesEverythingOption);
+    auto matches = anchor.globalMatch(html);
+    int added = 0;
+    int examined = 0;
+    while (matches.hasNext() && examined < 10000) {
+        const QRegularExpressionMatch match = matches.next();
+        ++examined;
+        const QString rawUrl =
+            QTextDocumentFragment::fromHtml(match.captured(2)).toPlainText().trimmed();
+        const QUrl url = QUrl::fromUserInput(rawUrl);
+        if (!url.isValid()
+            || (url.scheme() != QLatin1String("http")
+                && url.scheme() != QLatin1String("https"))
+            || url.host().isEmpty()) {
+            continue;
+        }
+
+        QString titleHtml = match.captured(3);
+        titleHtml.replace(QRegularExpression(QStringLiteral("<[^>]*>")),
+                          QStringLiteral(" "));
+        QString title =
+            QTextDocumentFragment::fromHtml(titleHtml).toPlainText().trimmed();
+        if (title.isEmpty()) {
+            title = url.host();
+        }
+        const bool existed = contains(url);
+        if (!add(title, url).isEmpty() && !existed) {
+            ++added;
+        }
+    }
+    if (examined == 0) {
+        if (error) {
+            *error = QStringLiteral("No bookmarks were found in that HTML file.");
+        }
+        return false;
+    }
+    if (imported) {
+        *imported = added;
+    }
     return true;
 }
 

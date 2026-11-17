@@ -1,0 +1,63 @@
+{
+  "id": "io.github.francydg2.cosmic",
+  "runtime": "org.kde.Platform",
+  "runtime-version": "6.11",
+  "sdk": "org.kde.Sdk",
+  "base": "io.qt.qtwebengine.BaseApp",
+  "base-version": "6.11",
+  "command": "cosmic",
+  "rename-desktop-file": "cosmic.desktop",
+  "rename-icon": "cosmic",
+  "finish-args": [
+    "--device=dri",
+    "--env=QTWEBENGINEPROCESS_PATH=/app/bin/QtWebEngineProcess",
+    "--filesystem=xdg-download",
+    "--share=ipc",
+    "--share=network",
+    "--socket=fallback-x11",
+    "--socket=pulseaudio",
+    "--socket=wayland",
+    "--system-talk-name=org.freedesktop.GeoClue2",
+    "--talk-name=org.freedesktop.Notifications"
+  ],
+  "cleanup-commands": [
+    "/app/cleanup-BaseApp.sh"
+  ],
+  "modules": [
+    {
+      "name": "cosmic",
+      "buildsystem": "cmake-ninja",
+      "builddir": true,
+      "config-opts": [
+        "-DCMAKE_BUILD_TYPE=Release"
+      ],
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://github.com/francydg2/cosmic-browser.git",
+          "tag": "v0.1.2",
+          "x-checker-data": {
+            "type": "json",
+            "url": "https://api.github.com/repos/francydg2/cosmic-browser/releases/latest",
+            "version-query": ".tag_name | sub(\"^v\"; \"\")",
+            "url-query": "\"https://github.com/francydg2/cosmic-browser/archive/refs/tags/\" + .tag_name + \".tar.gz\""
+          }
+        }
+      ]
+    },
+    {
+      "name": "appdata",
+      "buildsystem": "simple",
+      "build-commands": [
+        "sed -i -e 's|^TryExec=.*|TryExec=cosmic|' -e 's|^Exec=.*|Exec=cosmic %u|' /app/share/applications/cosmic.desktop",
+        "install -Dm644 io.github.francydg2.cosmic.metainfo.xml /app/share/metainfo/io.github.francydg2.cosmic.metainfo.xml"
+      ],
+      "sources": [
+        {
+          "type": "file",
+          "path": "io.github.francydg2.cosmic.metainfo.xml"
+        }
+      ]
+    }
+  ]
+}

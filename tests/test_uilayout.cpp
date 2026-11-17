@@ -14,6 +14,7 @@ class TestUiLayout : public QObject
 
 private slots:
     void defaultsMatchCurrentUi();
+    void removedAiLensIsMigrated();
     void roundtrip();
     void validationRejectsBadConfigs();
     void missingFieldsGetSafeDefaults();
@@ -36,7 +37,8 @@ void TestUiLayout::defaultsMatchCurrentUi()
     }
     QCOMPARE(left, QStringList({QStringLiteral("nav.back"),
                                 QStringLiteral("nav.forward"),
-                                QStringLiteral("nav.reload")}));
+                                QStringLiteral("nav.reload"),
+                                QStringLiteral("nav.home")}));
     QStringList center;
     for (const UiToolbarItem &item : cfg.toolbar.center) {
         center.append(item.component);
@@ -47,17 +49,18 @@ void TestUiLayout::defaultsMatchCurrentUi()
         right.append(item.component);
     }
     QCOMPARE(right, QStringList({QStringLiteral("bookmarks"), QStringLiteral("ai"),
-                                 QStringLiteral("ai.eye"), QStringLiteral("ram"),
-                                 QStringLiteral("vault"), QStringLiteral("settings")}));
-    QCOMPARE(cfg.toolbar.iconSize, 20);
+                                 QStringLiteral("ram"), QStringLiteral("vault"),
+                                 QStringLiteral("settings")}));
+    QCOMPARE(cfg.toolbar.iconSize, 22);
     QCOMPARE(cfg.toolbar.spacing, 6);
     QCOMPARE(cfg.toolbar.height, 56);
     QVERIFY(cfg.toolbar.color.isEmpty());
     QCOMPARE(cfg.urlbar.height, 0);
-    QCOMPARE(cfg.urlbar.radius, 0);
+    QCOMPARE(cfg.urlbar.radius, 18);
     QCOMPARE(cfg.urlbar.maxWidth, 0);
     QVERIFY(cfg.urlbar.color.isEmpty());
     QCOMPARE(cfg.tabs.position, QStringLiteral("horizontal"));
+    QCOMPARE(cfg.tabs.tabWidth, 250);
     QCOMPARE(cfg.tabs.tabHeight, 36);
     QCOMPARE(cfg.tabs.tabRadius, 9);
     QCOMPARE(cfg.tabs.tabSpacing, 6);
@@ -65,6 +68,24 @@ void TestUiLayout::defaultsMatchCurrentUi()
     QVERIFY(!cfg.sidebar.visible);
     QString error;
     QVERIFY(UiLayout::validate(cfg, &error));
+}
+
+void TestUiLayout::removedAiLensIsMigrated()
+{
+    QJsonObject json = UiLayout::defaultConfiguration().toJson();
+    QJsonObject toolbar = json.value(QStringLiteral("toolbar")).toObject();
+    QJsonArray right = toolbar.value(QStringLiteral("right")).toArray();
+    right.append(QJsonObject{{QStringLiteral("component"), QStringLiteral("ai.eye")}});
+    toolbar.insert(QStringLiteral("right"), right);
+    json.insert(QStringLiteral("toolbar"), toolbar);
+
+    bool ok = false;
+    const UIConfiguration migrated = UIConfiguration::fromJson(json, &ok);
+    QVERIFY(ok);
+    QVERIFY(!UiLayout::isKnownComponent(QStringLiteral("ai.eye")));
+    for (const UiToolbarItem &item : migrated.toolbar.right) {
+        QVERIFY(item.component != QLatin1String("ai.eye"));
+    }
 }
 
 void TestUiLayout::roundtrip()
@@ -119,11 +140,12 @@ void TestUiLayout::missingFieldsGetSafeDefaults()
     bool ok = false;
     const UIConfiguration cfg = UIConfiguration::fromJson(root, &ok);
     QVERIFY(ok);
-    QCOMPARE(cfg.toolbar.iconSize, 20);
+    QCOMPARE(cfg.toolbar.iconSize, 22);
     QCOMPARE(cfg.toolbar.spacing, 6);
     QCOMPARE(cfg.tabs.position, QStringLiteral("horizontal"));
     QCOMPARE(cfg.sidebar.width, 220);
     QVERIFY(!cfg.sidebar.visible);
+    QCOMPARE(cfg.tabs.tabWidth, 250);
 
     QJsonObject badTypes = root;
     QJsonObject toolbarObj = badTypes.value(QStringLiteral("toolbar")).toObject();
@@ -132,7 +154,7 @@ void TestUiLayout::missingFieldsGetSafeDefaults()
     badTypes.insert(QStringLiteral("toolbar"), toolbarObj);
     const UIConfiguration clamped = UIConfiguration::fromJson(badTypes, &ok);
     QVERIFY(ok);
-    QCOMPARE(clamped.toolbar.iconSize, 20);
+    QCOMPARE(clamped.toolbar.iconSize, 22);
     QCOMPARE(clamped.toolbar.spacing, 0);
 }
 
@@ -189,7 +211,7 @@ void TestUiLayout::editorMoveAddRemove()
     QSignalSpy errors(&editor, &LayoutEditor::error);
     QVERIFY(!editor.isModified());
 
-    QVERIFY(editor.moveItem(2, 5, 0, 0));
+    QVERIFY(editor.moveItem(2, 4, 0, 0));
     QCOMPARE(editor.configuration().toolbar.left.first().component,
              QStringLiteral("settings"));
     QVERIFY(editor.isModified());
@@ -220,6 +242,7 @@ void TestUiLayout::newFieldsRoundtripAndClamp()
     cfg.urlbar.radius = 12;
     cfg.urlbar.maxWidth = 600;
     cfg.urlbar.color = QStringLiteral("#abcdef");
+    cfg.tabs.tabWidth = 320;
     cfg.tabs.tabHeight = 44;
     cfg.tabs.tabRadius = 4;
     cfg.tabs.tabSpacing = 2;
@@ -235,6 +258,7 @@ void TestUiLayout::newFieldsRoundtripAndClamp()
     toolbarObj.insert(QStringLiteral("color"), QStringLiteral("red"));
     json.insert(QStringLiteral("toolbar"), toolbarObj);
     QJsonObject tabsObj = json.value(QStringLiteral("tabs")).toObject();
+    tabsObj.insert(QStringLiteral("tabWidth"), 900);
     tabsObj.insert(QStringLiteral("tabHeight"), -5);
     tabsObj.insert(QStringLiteral("showPlus"), QStringLiteral("yes"));
     json.insert(QStringLiteral("tabs"), tabsObj);
@@ -242,6 +266,7 @@ void TestUiLayout::newFieldsRoundtripAndClamp()
     QVERIFY(ok);
     QCOMPARE(clamped.toolbar.height, 72);
     QVERIFY(clamped.toolbar.color.isEmpty());
+    QCOMPARE(clamped.tabs.tabWidth, 420);
     QCOMPARE(clamped.tabs.tabHeight, 32);
     QVERIFY(clamped.tabs.showPlus);
 
@@ -275,6 +300,8 @@ void TestUiLayout::editorStyleOps()
 
     QVERIFY(editor.setTabPosition(QStringLiteral("vertical")));
     QVERIFY(!editor.setTabPosition(QStringLiteral("diagonal")));
+    QVERIFY(editor.setTabWidth(340));
+    QCOMPARE(editor.configuration().tabs.tabWidth, 340);
     QVERIFY(editor.setTabHeight(44));
     QVERIFY(editor.setTabRadius(0));
     QVERIFY(editor.setTabSpacing(12));

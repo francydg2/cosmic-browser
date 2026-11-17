@@ -5,6 +5,7 @@
 #include <QList>
 
 class WebPage;
+class QAction;
 
 /// Address bar: navigates the current page and mirrors its URL.
 /// URL-vs-search detection lives in core/UrlUtils (not here).
@@ -17,18 +18,24 @@ public:
 
     /// Binds the bar to \p page (nullptr unbinds). Re-binding is cheap.
     void setPage(WebPage *page);
+    void setBookmarked(bool bookmarked);
 
 signals:
     /// Emitted on Enter with the raw text; the window resolves it against
     /// the configured search engine (core/Browser::resolveInput).
     void inputSubmitted(const QString &text);
+    void bookmarkRequested();
+    void siteInfoRequested();
 
 protected:
     void focusInEvent(QFocusEvent *event) override;
 
 private:
     void applyUrl(const QUrl &url);
+    void updateUrlActions(const QUrl &url);
 
     WebPage *m_page = nullptr;
     QList<QMetaObject::Connection> m_connections;
+    QAction *m_siteInfoAction = nullptr;
+    QAction *m_bookmarkAction = nullptr;
 };

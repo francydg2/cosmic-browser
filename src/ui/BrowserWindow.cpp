@@ -23,6 +23,7 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QColor>
+#include <QCursor>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
@@ -110,14 +111,6 @@ const QString kAutofillScript = QStringLiteral(R"JS(
   }
   return 'filled';
 })JS");
-
-const QString kExtractPageContextScript = QStringLiteral(R"JS(
-(function () {
-  var b = document.body ? document.body.innerText : '';
-  b = b.replace(/\s+/g, ' ').slice(0, 2000);
-  return JSON.stringify({ url: location.href, excerpt: b });
-})()
-)JS");
 
 QList<QPointer<BrowserWindow>> g_windows;
 
@@ -213,6 +206,8 @@ BrowserWindow::BrowserWindow(Browser *browser, QWidget *parent)
             tab->webView()->reload();
         }
     });
+    m_actions->define(QStringLiteral("nav.home"), tr("Home"),
+                      QKeySequence(Qt::ALT | Qt::Key_Home), [this] { goHome(); });
     m_actions->define(QStringLiteral("tab.new"), tr("New Tab"), QKeySequence(Qt::CTRL | Qt::Key_T),
                       [this] {
         auto *tab = addTab(QUrl(), false);
@@ -337,11 +332,6 @@ BrowserWindow::BrowserWindow(Browser *browser, QWidget *parent)
                       QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S), [this] {
         savePasswordForCurrentPage();
     });
-    QAction *aiContextAction = m_actions->define(
-        QStringLiteral("ai.pageContext"), tr("Let the AI read this page"), {}, [this] {
-            setAiPageContext(!m_aiPageContext);
-        });
-    aiContextAction->setCheckable(true);
     struct AiService {
         const char *id;
         const char *name;
@@ -357,7 +347,7 @@ BrowserWindow::BrowserWindow(Browser *browser, QWidget *parent)
     for (const AiService &service : aiServices) {
         const QUrl url = QUrl(QString::fromUtf8(service.url));
         m_actions->define(QString::fromUtf8(service.id), QString::fromUtf8(service.name),
-                          {}, [this, url] { openAiService(url); });
+                          {}, [this, url] { addTab(url, false); });
     }
     QAction *ramSaverAction = m_actions->define(
         QStringLiteral("performance.ramSaver"), tr("RAM Saver (discard background tabs)"),
@@ -390,13 +380,15 @@ BrowserWindow::BrowserWindow(Browser *browser, QWidget *parent)
     m_actions->action(QStringLiteral("nav.forward"))
         ->setIcon(QIcon(QStringLiteral(":/icons/forward.svg")));
     m_reloadAction->setIcon(QIcon(QStringLiteral(":/icons/reload.svg")));
+    m_actions->action(QStringLiteral("nav.home"))
+        ->setIcon(QIcon(QStringLiteral(":/icons/home.svg")));
 
     QToolBar *toolbar = addToolBar(tr("Navigation"));
     toolbar->setObjectName(QStringLiteral("navToolbar"));
     toolbar->setMovable(false);
     toolbar->setFloatable(false);
     toolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);
-    toolbar->setIconSize(QSize(20, 20));
+    toolbar->setIconSize(QSize(22, 22));
     toolbar->setContentsMargins(10, 6, 10, 6);
     m_toolbar = toolbar;
 
@@ -408,6 +400,7 @@ BrowserWindow::BrowserWindow(Browser *browser, QWidget *parent)
     m_userButton->setPopupMode(QToolButton::InstantPopup);
     m_userButton->setIcon(QIcon(QStringLiteral(":/icons/layers.svg")));
     m_userButton->setFocusPolicy(Qt::NoFocus);
+    m_userButton->setProperty("toolbarIdentity", true);
     m_userMenu = new QMenu(m_userButton);
     m_userButton->setMenu(m_userMenu);
     connect(m_userMenu, &QMenu::aboutToShow, this, &BrowserWindow::buildUserMenu);
@@ -415,6 +408,13 @@ BrowserWindow::BrowserWindow(Browser *browser, QWidget *parent)
     m_urlBar = new UrlBar(this);
     m_urlBar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     connect(m_urlBar, &UrlBar::inputSubmitted, this, &BrowserWindow::handleInput);
+    connect(m_urlBar, &UrlBar::bookmarkRequested, this,
+            &BrowserWindow::toggleBookmarkForCurrentPage);
+    connect(m_urlBar, &UrlBar::siteInfoRequested, this, &BrowserWindow::showSiteInfo);
+    if (m_browser && m_browser->bookmarks()) {
+        connect(m_browser->bookmarks(), &Bookmarks::changed, this,
+                &BrowserWindow::updateChrome);
+    }
 
     applyUILayout();
 
@@ -437,6 +437,21 @@ BrowserWindow::BrowserWindow(Browser *browser, QWidget *parent)
         connect(nebulaBar, &NebulaTabBar::newTabRequested, this, [this] {
             m_actions->action(QStringLiteral("tab.new"))->trigger();
         });
+        connect(nebulaBar, &NebulaTabBar::verticalTabWidthResized, this,
+                [this](int width) {
+                    if (!m_browser) {
+                        return;
+                    }
+                    UIConfiguration cfg = m_browser->uiConfiguration();
+                    if (cfg.tabs.tabWidth == width) {
+                        return;
+                    }
+                    cfg.tabs.tabWidth = width;
+                    if (!m_browser->saveUiConfiguration(cfg)) {
+                        statusBar()->showMessage(
+                            tr("Could not save the vertical tab width."), 5000);
+                    }
+                });
     }
     connect(m_tabs, &QTabWidget::currentChanged, this, [this] {
         if (m_browser && m_browser->settings()->ramSaverEnabled()) {
@@ -828,6 +843,23 @@ void BrowserWindow::navigateCurrent(const QUrl &url)
     }
     tab->webView()->webPage()->setUrl(url);
     tab->webView()->setFocus();
+}
+
+void BrowserWindow::goHome()
+{
+    TabContent *tab = currentTab();
+    if (!tab) {
+        return;
+    }
+    tab->webView()->stop();
+    tab->showNewTab();
+    tab->webView()->webPage()->setUrl(QUrl(QStringLiteral("about:blank")));
+    const int index = m_tabs->indexOf(tab);
+    if (index >= 0) {
+        m_tabs->setTabText(index, tr("New Tab"));
+        m_tabs->setTabIcon(index, QIcon());
+    }
+    updateChrome();
 }
 
 void BrowserWindow::handleInput(const QString &text)
@@ -1385,8 +1417,22 @@ void BrowserWindow::wireTab(TabContent *content)
                 [page = content->newTabPage(), bookmarks] {
                     page->setBookmarks(bookmarks->items());
                 });
+        BlocklistInterceptor *interceptor = m_browser->requestInterceptor();
+        Settings *settings = m_browser->settings();
+        const auto updatePrivacyStatus = [page = content->newTabPage(), interceptor,
+                                          settings] {
+            page->setPrivacyStatus(settings->requestBlockingEnabled(),
+                                   interceptor->blockedCount());
+        };
+        updatePrivacyStatus();
+        connect(interceptor, &BlocklistInterceptor::blockedCountChanged,
+                content->newTabPage(),
+                [updatePrivacyStatus](int) { updatePrivacyStatus(); });
+        connect(settings, &Settings::requestBlockingChanged, content->newTabPage(),
+                [updatePrivacyStatus](bool) { updatePrivacyStatus(); });
     } else {
         content->newTabPage()->setBookmarks({});
+        content->newTabPage()->setPrivacyStatus(false, 0);
     }
 
     connect(page, &WebPage::titleChanged, this, [this, content](const QString &title) {
@@ -1475,8 +1521,10 @@ void BrowserWindow::updateChrome()
     if (!tab) {
         // Settings tab (Chrome style): no page behind the chrome.
         m_urlBar->setPage(nullptr);
+        m_urlBar->setBookmarked(false);
         m_actions->action(QStringLiteral("nav.back"))->setEnabled(false);
         m_actions->action(QStringLiteral("nav.forward"))->setEnabled(false);
+        m_actions->action(QStringLiteral("nav.home"))->setEnabled(false);
         m_actions->action(QStringLiteral("tab.reopen"))->setEnabled(!m_closedTabs.empty());
         if (QAction *pinAction = m_actions->action(QStringLiteral("tab.pin"))) {
             pinAction->setText(tr("Pin Tab"));
@@ -1500,12 +1548,16 @@ void BrowserWindow::updateChrome()
     } else {
         m_urlBar->setPage(page);
     }
+    const QUrl currentUrl = page->url();
+    m_urlBar->setBookmarked(m_browser && m_browser->bookmarks()
+                            && m_browser->bookmarks()->contains(currentUrl));
 
     auto *back = m_actions->action(QStringLiteral("nav.back"));
     auto *forward = m_actions->action(QStringLiteral("nav.forward"));
     auto *reopen = m_actions->action(QStringLiteral("tab.reopen"));
     back->setEnabled(page->history()->canGoBack());
     forward->setEnabled(page->history()->canGoForward());
+    m_actions->action(QStringLiteral("nav.home"))->setEnabled(!tab->isShowingNewTab());
     reopen->setEnabled(!m_closedTabs.empty());
 
     // Pin action label mirrors the current tab state.
@@ -1559,6 +1611,74 @@ void BrowserWindow::handleBookmarkOpen(const QUrl &url, bool newTab)
     }
 }
 
+void BrowserWindow::toggleBookmarkForCurrentPage()
+{
+    TabContent *tab = currentTab();
+    if (!m_browser || !tab) {
+        return;
+    }
+    WebPage *page = tab->webView()->webPage();
+    const QUrl url = page->url();
+    if (!url.isValid() || (url.scheme() != QLatin1String("http")
+                           && url.scheme() != QLatin1String("https"))) {
+        return;
+    }
+
+    Bookmarks *bookmarks = m_browser->bookmarks();
+    if (bookmarks->contains(url)) {
+        for (const Bookmark &bookmark : bookmarks->items()) {
+            if (bookmark.url == url) {
+                bookmarks->remove(bookmark.id);
+                statusBar()->showMessage(tr("Bookmark removed."), 2500);
+                break;
+            }
+        }
+    } else {
+        QString title = page->title().trimmed();
+        if (title.isEmpty()) {
+            title = url.host();
+        }
+        if (!bookmarks->add(title, url).isEmpty()) {
+            statusBar()->showMessage(tr("Bookmark added."), 2500);
+        }
+    }
+    updateChrome();
+}
+
+void BrowserWindow::showSiteInfo()
+{
+    TabContent *tab = currentTab();
+    if (!tab) {
+        return;
+    }
+    const QUrl url = tab->webView()->webPage()->url();
+    if (url.scheme() != QLatin1String("http") && url.scheme() != QLatin1String("https")) {
+        return;
+    }
+
+    QMenu menu(this);
+    QAction *connection = menu.addAction(
+        url.scheme() == QLatin1String("https") ? tr("Secure connection (HTTPS)")
+                                               : tr("Connection not secure (HTTP)"));
+    connection->setEnabled(false);
+    QAction *site = menu.addAction(url.host());
+    site->setEnabled(false);
+    menu.addSeparator();
+    const bool protectionEnabled =
+        m_browser && m_browser->settings()->requestBlockingEnabled();
+    const int blocked = m_browser && m_browser->requestInterceptor()
+        ? m_browser->requestInterceptor()->blockedCount()
+        : 0;
+    QAction *protection = menu.addAction(
+        protectionEnabled
+            ? tr("Cosmic Shield on · %1 requests blocked").arg(blocked)
+            : tr("Cosmic Shield is off"));
+    protection->setEnabled(false);
+    menu.addAction(tr("Privacy settings…"), this,
+                   [this] { openSettingsTab(QStringLiteral("privacy")); });
+    menu.exec(QCursor::pos());
+}
+
 void BrowserWindow::applyUILayout()
 {
     if (!m_browser || !m_toolbar) {
@@ -1571,6 +1691,7 @@ void BrowserWindow::applyUILayout()
             << "invalid UI configuration, falling back to default:" << error;
         cfg = UiLayout::defaultConfiguration();
     }
+    cfg.tabs.position = m_browser->settings()->tabPosition();
 
     for (QAction *action : m_toolbar->actions()) {
         m_toolbar->removeAction(action);
@@ -1580,7 +1701,6 @@ void BrowserWindow::applyUILayout()
     m_toolbarActions.clear();
     m_bookmarksButton = nullptr;
     m_aiButton = nullptr;
-    m_aiEyeButton = nullptr;
     m_ramButton = nullptr;
     m_keyButton = nullptr;
 
@@ -1603,6 +1723,7 @@ void BrowserWindow::applyUILayout()
     }
     const UiLayout::UiToolbarMetrics metrics = UiLayout::toolbarMetrics(cfg.toolbar);
     m_toolbar->setIconSize(QSize(metrics.iconSize, metrics.iconSize));
+    m_toolbar->setMinimumHeight(metrics.height);
     if (QLayout *layout = m_toolbar->layout()) {
         layout->setSpacing(cfg.toolbar.spacing);
     }
@@ -1626,6 +1747,7 @@ void BrowserWindow::applyUILayout()
 
     if (auto *bar = qobject_cast<NebulaTabBar *>(m_tabs->tabBar())) {
         bar->setTabHeight(cfg.tabs.tabHeight);
+        bar->setVerticalTabWidth(cfg.tabs.tabWidth);
         bar->setTabRadius(cfg.tabs.tabRadius);
         bar->setTabSpacing(cfg.tabs.tabSpacing);
         bar->setShowPlus(cfg.tabs.showPlus);
@@ -1666,18 +1788,29 @@ void BrowserWindow::addToolbarComponent(const QString &component)
         return;
     }
     if (component == QLatin1String("nav.back") || component == QLatin1String("nav.forward")
-        || component == QLatin1String("nav.reload")) {
+        || component == QLatin1String("nav.reload")
+        || component == QLatin1String("nav.home")) {
         QAction *action = m_actions->action(component);
         if (!action) {
             return;
         }
         m_toolbar->addAction(action);
+        if (auto *button = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(action))) {
+            button->setObjectName(QStringLiteral("navIconButton"));
+            button->setProperty("toolbarIcon", true);
+            button->setAutoRaise(true);
+            button->setFixedSize(38, 38);
+            button->setToolTip(action->text());
+            button->setStatusTip(action->text());
+        }
         m_toolbarActions.append(action);
         return;
     }
 
     auto *button = new QToolButton(m_toolbar);
     button->setAutoRaise(true);
+    button->setProperty("toolbarIcon", true);
+    button->setFixedSize(38, 38);
 
     if (component == QLatin1String("bookmarks")) {
         m_bookmarksButton = button;
@@ -1695,17 +1828,6 @@ void BrowserWindow::addToolbarComponent(const QString &component)
         button->setToolTip(tr("AI assistants"));
         button->setPopupMode(QToolButton::InstantPopup);
         buildAiMenu();
-    } else if (component == QLatin1String("ai.eye")) {
-        m_aiEyeButton = button;
-        button->setObjectName(QStringLiteral("aiEyeButton"));
-        button->setCheckable(true);
-        button->setIcon(QIcon(QStringLiteral(":/icons/eye.svg")));
-        button->setToolTip(
-            tr("Let the AI read this page (copies page context to the clipboard)"));
-        connect(button, &QToolButton::toggled, this, [this](bool on) {
-            setAiPageContext(on);
-        });
-        button->setChecked(m_aiPageContext);
     } else if (component == QLatin1String("ram")) {
         m_ramButton = button;
         button->setObjectName(QStringLiteral("ramButton"));
@@ -1809,8 +1931,6 @@ void BrowserWindow::buildBookmarksMenu()
 void BrowserWindow::buildAiMenu()
 {
     auto *menu = new QMenu(m_aiButton);
-    menu->addAction(m_actions->action(QStringLiteral("ai.pageContext")));
-    menu->addSeparator();
     menu->addAction(m_actions->action(QStringLiteral("ai.open.chatgpt")));
     menu->addAction(m_actions->action(QStringLiteral("ai.open.claude")));
     menu->addAction(m_actions->action(QStringLiteral("ai.open.gemini")));
@@ -1827,53 +1947,6 @@ void BrowserWindow::buildRamMenu()
     m_ramButton->setMenu(menu);
 }
 
-void BrowserWindow::setAiPageContext(bool enabled)
-{
-    m_aiPageContext = enabled;
-    if (m_aiEyeButton) {
-        m_aiEyeButton->setChecked(enabled);
-    }
-    if (QAction *action = m_actions->action(QStringLiteral("ai.pageContext"))) {
-        action->setChecked(enabled);
-    }
-    statusBar()->showMessage(enabled ? tr("AI can read this page (context copied on use).")
-                                     : tr("AI page reading off."),
-                             3000);
-}
-
-void BrowserWindow::openAiService(const QUrl &url)
-{
-    TabContent *tab = currentTab();
-    WebPage *page = tab ? tab->webView()->webPage() : nullptr;
-    const bool readable = m_aiPageContext && page
-        && (page->url().scheme() == QLatin1String("http")
-            || page->url().scheme() == QLatin1String("https"));
-    if (!readable) {
-        addTab(url, false);
-        return;
-    }
-    QPointer<WebPage> guard(page);
-    QPointer<BrowserWindow> self(this);
-    page->runJavaScript(kExtractPageContextScript, [self, guard, url](const QVariant &v) {
-        if (!self) {
-            return;
-        }
-        if (guard) {
-            const QJsonObject obj =
-                QJsonDocument::fromJson(v.toString().toUtf8()).object();
-            const QString prompt =
-                BrowserWindow::tr("Page: %1\nURL: %2\n\nExcerpt:\n%3\n\nMy question: ")
-                    .arg(guard->title(), obj.value(QStringLiteral("url")).toString(),
-                         obj.value(QStringLiteral("excerpt")).toString());
-            QGuiApplication::clipboard()->setText(prompt);
-            self->statusBar()->showMessage(
-                BrowserWindow::tr("Page context copied — paste it into the AI chat."),
-                6000);
-        }
-        self->addTab(url, false);
-    });
-}
-
 void BrowserWindow::applyTabPosition()
 {
     if (!m_browser) {
@@ -1882,11 +1955,13 @@ void BrowserWindow::applyTabPosition()
     const bool vertical =
         m_browser->settings()->tabPosition() == QLatin1String("vertical");
     m_tabs->setTabPosition(vertical ? QTabWidget::West : QTabWidget::North);
-    m_tabs->setStyleSheet(
-        vertical ? QStringLiteral("QTabWidget#tabWidget::pane { border: none;"
-                                  " border-left: 1px solid #1e212a;"
-                                  " background: #0f1013; }")
-                 : QString());
+    UIConfiguration cfg = m_browser->uiConfiguration();
+    cfg.tabs.position = vertical ? QStringLiteral("vertical")
+                                 : QStringLiteral("horizontal");
+    if (auto *bar = qobject_cast<NebulaTabBar *>(m_tabs->tabBar())) {
+        bar->setVerticalTabWidth(cfg.tabs.tabWidth);
+    }
+    m_tabs->setStyleSheet(tabWidgetStyleSheet(cfg));
 }
 
 void BrowserWindow::discardBackgroundTabs()

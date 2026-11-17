@@ -3,6 +3,29 @@
 set(NEBULA_TEST_RES_FILES
     ${CMAKE_SOURCE_DIR}/resources/styles/cosmic-dark.qss
     ${CMAKE_SOURCE_DIR}/resources/icons/saturn.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/back.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/forward.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/reload.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/home.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/stop.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/gear.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/layers.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/globe.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/close.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/close-active.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/arrow-down.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/check.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/ai.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/star.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/star-active.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/key.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/lock.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/ram.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/folder.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/search.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/palette.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/user.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/wrench.svg
     ${CMAKE_SOURCE_DIR}/resources/blocklists/default.txt
 )
 
