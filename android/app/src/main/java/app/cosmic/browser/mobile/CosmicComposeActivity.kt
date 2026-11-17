@@ -108,6 +108,17 @@ private data class DownloadInfo(
 
 private enum class BrowserScreen { BROWSER, TABS, BOOKMARKS, HISTORY, SETTINGS, READER }
 
+private enum class SettingsCategory(val title: String, val description: String) {
+    GENERAL("Generali", "Avvio e sessione"),
+    SEARCH("Motore di ricerca", "Ricerca dalla barra degli indirizzi"),
+    PRIVACY("Privacy", "Protezione e permessi dei siti"),
+    APPEARANCE("Aspetto", "Colori e disposizione"),
+    PASSWORDS("Password", "Vault e credenziali"),
+    USERS("Utenti", "Profili e dati di navigazione"),
+    ADVANCED("Avanzate", "Connessioni e dati"),
+    UPDATES("Aggiornamenti", "Versione Android")
+}
+
 private data class SearchEngine(val id: String, val name: String, val queryUrl: String) {
     fun search(query: String): String = queryUrl.replace("%s", Uri.encode(query))
 }
@@ -116,7 +127,9 @@ private val searchEngines = listOf(
     SearchEngine("duckduckgo", "DuckDuckGo", "https://duckduckgo.com/?q=%s"),
     SearchEngine("google", "Google", "https://www.google.com/search?q=%s"),
     SearchEngine("bing", "Bing", "https://www.bing.com/search?q=%s"),
-    SearchEngine("brave", "Brave Search", "https://search.brave.com/search?q=%s")
+    SearchEngine("startpage", "Startpage", "https://www.startpage.com/sp/search?query=%s"),
+    SearchEngine("brave", "Brave Search", "https://search.brave.com/search?q=%s"),
+    SearchEngine("mojeek", "Mojeek", "https://www.mojeek.com/search?q=%s")
 )
 
 private val translationLanguages = listOf(
@@ -260,6 +273,13 @@ private class BrowserController(
     var screen by mutableStateOf(BrowserScreen.BROWSER)
     var searchEngineId by mutableStateOf("duckduckgo")
         private set
+    var customSearchTemplate by mutableStateOf("")
+        private set
+    var restoreSession by mutableStateOf(preferences.getBoolean("restoreSession", true))
+        private set
+    var settingsCategory by mutableStateOf<SettingsCategory?>(null)
+    val versionName: String = activity.packageManager
+        .getPackageInfo(activity.packageName, 0).versionName ?: "non disponibile"
     var showClearDialog by mutableStateOf(false)
     var readerTitle by mutableStateOf("")
         private set
@@ -273,6 +293,7 @@ private class BrowserController(
         restoreBookmarks()
         restoreHistory()
         searchEngineId = preferences.getString("searchEngine", "duckduckgo") ?: "duckduckgo"
+        customSearchTemplate = preferences.getString("customSearchTemplate", "") ?: ""
         restoreTabs()
     }
 
@@ -282,7 +303,7 @@ private class BrowserController(
     private fun restoreTabs() {
         val restored = mutableListOf<String>()
         try {
-            val array = JSONArray(preferences.getString("tabs", "[]"))
+            val array = JSONArray(if (restoreSession) preferences.getString("tabs", "[]") else "[]")
             for (index in 0 until minOf(array.length(), 20)) {
                 restored += array.optString(index)
             }
@@ -361,6 +382,10 @@ private class BrowserController(
         val looksLikeHost = !input.any(Char::isWhitespace) &&
             (input.contains('.') || lower.startsWith("localhost:") || lower == "localhost")
         if (looksLikeHost) return "https://$input"
+        if (searchEngineId == "custom") {
+            if (!validSearchTemplate(customSearchTemplate)) return null
+            return customSearchTemplate.replace("%1", Uri.encode(input))
+        }
         val engine = searchEngines.firstOrNull { it.id == searchEngineId } ?: searchEngines.first()
         return engine.search(input)
     }
@@ -369,6 +394,21 @@ private class BrowserController(
         if (searchEngines.none { it.id == id }) return
         searchEngineId = id
         preferences.edit().putString("searchEngine", id).apply()
+    }
+
+    fun chooseCustomSearch(template: String): Boolean {
+        val value = template.trim()
+        if (!validSearchTemplate(value)) return false
+        customSearchTemplate = value
+        searchEngineId = "custom"
+        preferences.edit().putString("customSearchTemplate", value).putString("searchEngine", "custom").apply()
+        return true
+    }
+
+    fun updateRestoreSession(enabled: Boolean) {
+        restoreSession = enabled
+        preferences.edit().putBoolean("restoreSession", enabled).apply()
+        save()
     }
 
     fun updateBlockKnownHosts(enabled: Boolean) {
@@ -524,7 +564,9 @@ private class BrowserController(
     }
 
     fun handleBack(onExit: () -> Unit) {
-        if (screen != BrowserScreen.BROWSER) {
+        if (screen == BrowserScreen.SETTINGS && settingsCategory != null) {
+            settingsCategory = null
+        } else if (screen != BrowserScreen.BROWSER) {
             screen = BrowserScreen.BROWSER
         } else if (activeTab.webView?.canGoBack() == true) {
             goBack()
@@ -552,6 +594,10 @@ private class BrowserController(
     }
 
     fun save() {
+        if (!restoreSession) {
+            preferences.edit().remove("tabs").remove("activeTab").apply()
+            return
+        }
         val urls = JSONArray()
         tabs.forEach { urls.put(it.url) }
         preferences.edit()
@@ -884,13 +930,19 @@ private fun Header(controller: BrowserController) {
                 }
             }
         } else {
-            TextButton(onClick = { controller.screen = BrowserScreen.BROWSER }) { Text("‹ Indietro") }
+            TextButton(onClick = {
+                if (controller.screen == BrowserScreen.SETTINGS && controller.settingsCategory != null) {
+                    controller.settingsCategory = null
+                } else {
+                    controller.screen = BrowserScreen.BROWSER
+                }
+            }) { Text("‹ Indietro") }
             Text(
                 when (controller.screen) {
                     BrowserScreen.TABS -> "${controller.tabs.size} schede"
                     BrowserScreen.BOOKMARKS -> "Preferiti"
                     BrowserScreen.HISTORY -> "Cronologia"
-                    BrowserScreen.SETTINGS -> "Impostazioni"
+                    BrowserScreen.SETTINGS -> controller.settingsCategory?.title ?: "Impostazioni"
                     BrowserScreen.READER -> "Modalità lettura"
                     BrowserScreen.BROWSER -> "COSMIC"
                 },
@@ -1131,78 +1183,123 @@ private fun HistoryScreen(controller: BrowserController, modifier: Modifier) {
 
 @Composable
 private fun SettingsScreen(controller: BrowserController, modifier: Modifier) {
+    val category = controller.settingsCategory
     LazyColumn(
         modifier = modifier,
         contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        item {
-            Text("Ricerca", color = CosmicText, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-            Text(
-                "Scegli il motore usato quando cerchi dalla barra.",
-                color = CosmicMuted,
-                modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
-            )
-        }
-        items(searchEngines, key = { it.id }) { engine ->
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { controller.chooseSearchEngine(engine.id) },
-                color = CosmicCard,
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(
-                        selected = controller.searchEngineId == engine.id,
-                        onClick = { controller.chooseSearchEngine(engine.id) }
-                    )
-                    Text(engine.name, color = CosmicText)
+        if (category == null) {
+            items(SettingsCategory.entries, key = { it.name }) { entry ->
+                Surface(
+                    modifier = Modifier.fillMaxWidth().clickable { controller.settingsCategory = entry },
+                    color = CosmicCard,
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text(entry.title, color = CosmicText, fontWeight = FontWeight.SemiBold)
+                        Text(entry.description, color = CosmicMuted, fontSize = 12.sp)
+                    }
                 }
             }
-        }
-        item {
-            Spacer(Modifier.height(12.dp))
-            Text("Navigazione", color = CosmicText, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-            Text(
-                "Cosmic usa Android System WebView. JavaScript e archiviazione web sono attivi per compatibilità; accesso ai file locali, contenuti misti non sicuri e finestre JavaScript sono disabilitati.",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp)
-                    .background(CosmicCard, RoundedCornerShape(12.dp))
-                    .padding(14.dp),
-                color = CosmicMuted
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Blocca domini noti", color = CosmicText)
-                    Text(
-                        "Usa la lista di domini inclusa; non blocca tutti gli annunci o tracker.",
-                        color = CosmicMuted,
-                        fontSize = 12.sp
-                    )
+        } else when (category) {
+            SettingsCategory.GENERAL -> item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Ripristina la sessione precedente", color = CosmicText)
+                        Text("Riapre le schede all'avvio. Se disattivato, le schede salvate vengono rimosse.",
+                            color = CosmicMuted, fontSize = 12.sp)
+                    }
+                    Switch(checked = controller.restoreSession, onCheckedChange = controller::updateRestoreSession)
                 }
-                Switch(
-                    checked = controller.blockKnownHosts,
-                    onCheckedChange = controller::updateBlockKnownHosts
-                )
             }
-            Spacer(Modifier.height(14.dp))
-            Button(
-                onClick = { controller.showClearDialog = true },
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = CosmicCard)
-            ) { Text("Cancella cookie, cache e dati dei siti", color = CosmicText) }
-            Spacer(Modifier.height(14.dp))
-            Text(
-                "Cosmic per Android · anteprima 0.3.0",
-                modifier = Modifier.fillMaxWidth(),
-                color = CosmicMuted,
-                fontSize = 12.sp
-            )
+            SettingsCategory.SEARCH -> {
+                item { Text("Motore di ricerca predefinito", color = CosmicText) }
+                items(searchEngines, key = { it.id }) { engine ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().clickable { controller.chooseSearchEngine(engine.id) },
+                        color = CosmicCard,
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = controller.searchEngineId == engine.id,
+                                onClick = { controller.chooseSearchEngine(engine.id) })
+                            Text(engine.name, color = CosmicText)
+                        }
+                    }
+                }
+                item { CustomSearchSetting(controller) }
+            }
+            SettingsCategory.PRIVACY -> item {
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Blocca domini noti", color = CosmicText)
+                            Text("Usa la lista inclusa; non blocca tutti gli annunci o tracker.",
+                                color = CosmicMuted, fontSize = 12.sp)
+                        }
+                        Switch(checked = controller.blockKnownHosts, onCheckedChange = controller::updateBlockKnownHosts)
+                    }
+                    SettingsNotice("Do Not Track, cookie solo per la sessione e gestione dei permessi per sito non sono ancora configurabili su Android.")
+                }
+            }
+            SettingsCategory.APPEARANCE -> item {
+                SettingsNotice("Colori personalizzati, posizione delle schede e personalizzazione della barra non sono ancora disponibili su Android.")
+            }
+            SettingsCategory.PASSWORDS -> item {
+                SettingsNotice("Il vault delle password non è ancora integrato nella versione Android.")
+            }
+            SettingsCategory.USERS -> item {
+                SettingsNotice("I profili isolati non sono ancora disponibili su Android.")
+            }
+            SettingsCategory.ADVANCED -> item {
+                Column {
+                    SettingsNotice("L'aggiornamento automatico delle pagine HTTP a HTTPS e il ripristino delle impostazioni non sono ancora disponibili. I contenuti misti sono bloccati.")
+                    Button(
+                        onClick = { controller.showClearDialog = true },
+                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = CosmicCard)
+                    ) { Text("Cancella cookie, cache e dati dei siti", color = CosmicText) }
+                }
+            }
+            SettingsCategory.UPDATES -> item {
+                SettingsNotice("Cosmic Android ${controller.versionName}. La verifica e l'installazione automatica degli aggiornamenti non sono ancora disponibili.")
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsNotice(message: String) {
+    Text(message, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+        .background(CosmicCard, RoundedCornerShape(12.dp)).padding(14.dp), color = CosmicMuted)
+}
+
+@Composable
+private fun CustomSearchSetting(controller: BrowserController) {
+    var template by remember { mutableStateOf(controller.customSearchTemplate) }
+    var error by remember { mutableStateOf(false) }
+    Column {
+        Spacer(Modifier.height(12.dp))
+        Text(if (controller.searchEngineId == "custom") "Motore personalizzato attivo" else "Motore personalizzato",
+            color = CosmicText, fontWeight = FontWeight.SemiBold)
+        Text("Inserisci un indirizzo HTTP o HTTPS con %1 al posto dei termini di ricerca.",
+            color = CosmicMuted, fontSize = 12.sp)
+        OutlinedTextField(
+            value = template,
+            onValueChange = { template = it; error = false },
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            label = { Text("URL di ricerca") },
+            placeholder = { Text("https://example.com/search?q=%1") },
+            singleLine = true,
+            isError = error,
+            supportingText = if (error) ({ Text("Inserisci un URL valido contenente %1.") }) else null
+        )
+        Button(onClick = { error = !controller.chooseCustomSearch(template) }) {
+            Text("Salva e usa")
         }
     }
 }
@@ -1223,7 +1320,10 @@ private fun NavigationBar(controller: BrowserController) {
         NavButton("⌂", "Home", controller::goHome)
         NavButton("${controller.tabs.size}", "Schede") { controller.screen = BrowserScreen.TABS }
         NavButton("☆", "Preferiti") { controller.screen = BrowserScreen.BOOKMARKS }
-        NavButton("⚙", "Impostazioni") { controller.screen = BrowserScreen.SETTINGS }
+        NavButton("⚙", "Impostazioni") {
+            controller.settingsCategory = null
+            controller.screen = BrowserScreen.SETTINGS
+        }
     }
 }
 

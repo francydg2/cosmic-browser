@@ -5,7 +5,7 @@ Cosmic's dark charcoal and violet visual style while using a Chrome-inspired
 tab grid and Android's system WebView.
 
 The Compose preview implements browsing and search, multiple tabs, bookmarks,
-history, search-engine selection, session restore, system downloads and
+history, built-in and custom search engines, configurable session restore, system downloads and
 controls for clearing site data. A switch enables blocking requests to domains
 in the bundled desktop host list. WebView request interception has limitations
 and this is not an EasyList/EasyPrivacy or cosmetic-filtering engine.
@@ -17,8 +17,10 @@ sends it the page address, including query parameters; authenticated pages may
 not be accessible. URLs used for translation and QR codes omit user credentials.
 
 The Android version remains incomplete: isolated private tabs and profiles,
-tab groups, an integrated password vault, custom search engines and themes are
+tab groups, an integrated password vault and themes are
 not yet available. The Compose preview has not yet been verified on a device.
+Settings use the desktop categories and explain which desktop options are not
+yet supported on Android.
 
 ## Build
 
