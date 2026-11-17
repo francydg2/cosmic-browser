@@ -23,6 +23,9 @@ class PasswordVault : public QObject
 
 public:
     explicit PasswordVault(const QString &filePath, QObject *parent = nullptr);
+    ~PasswordVault() override;
+
+    static constexpr int minimumMasterPasswordLength = 16;
 
     QString filePath() const { return m_path; }
     bool fileExists() const;

@@ -1,5 +1,7 @@
 #include "browser/Browser.h"
+#include "browser/DownloadManager.h"
 #include "core/Bookmarks.h"
+#include "core/Notes.h"
 #include "core/UserCatalog.h"
 #include "core/Logging.h"
 #include "core/PasswordVault.h"
@@ -37,8 +39,11 @@ Browser::Browser()
     m_bookmarks->load();
     QObject::connect(m_bookmarks.get(), &Bookmarks::changed, m_bookmarks.get(),
                      &Bookmarks::save);
+    m_notes = std::make_unique<Notes>(Paths::dataDir() + QStringLiteral("/notes.json"));
+    m_notes->load();
     m_vault = std::make_unique<PasswordVault>(
         Paths::configDir() + QLatin1Char('/') + kVaultFileName);
+    m_downloads = std::make_unique<DownloadManager>();
     m_uiConfig = UiLayout::defaultConfiguration();
     loadUiConfiguration();
 
@@ -104,6 +109,7 @@ QWebEngineProfile *Browser::profileForUser(const QString &userId)
     // One storage partition per user: cookies, localStorage and
     // cache live under XDG data/cache, never in ~.
     auto *profile = new QWebEngineProfile(QStringLiteral("cosmic.") + id);
+    m_downloads->attachProfile(profile);
     profile->setPersistentStoragePath(Paths::dataDir() + QStringLiteral("/profiles/") + id);
     profile->setCachePath(Paths::cacheDir() + QStringLiteral("/profiles/") + id);
     profile->setPersistentCookiesPolicy(m_settings->sessionCookiesOnly()
@@ -249,6 +255,7 @@ void Browser::configureDefaultProfile()
     // Spec §55: all persistent data lives in XDG directories, never in ~.
     Paths::ensureDirs();
     QWebEngineProfile *profile = QWebEngineProfile::defaultProfile();
+    m_downloads->attachProfile(profile);
     profile->setPersistentStoragePath(Paths::dataDir() + QStringLiteral("/profile"));
     profile->setCachePath(Paths::cacheDir() + QStringLiteral("/http-cache"));
     profile->setPersistentCookiesPolicy(m_settings->sessionCookiesOnly()

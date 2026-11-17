@@ -20,6 +20,7 @@ private slots:
     void entryForUrlMatching();
     void rejectsBadInput();
     void passkeyEntriesSupported();
+    void unlocksLegacyShortPassword();
 };
 
 void TestVault::initializeAndUnlock()
@@ -30,7 +31,7 @@ void TestVault::initializeAndUnlock()
     {
         PasswordVault vault(path);
         QVERIFY(!vault.fileExists());
-        QVERIFY(vault.initialize(QStringLiteral("hunter2")));
+        QVERIFY(vault.initialize(QStringLiteral("hunter2-strong-passphrase")));
         QVERIFY(vault.fileExists());
         QVERIFY(vault.isUnlocked());
         QCOMPARE(vault.entries().size(), 0);
@@ -40,7 +41,7 @@ void TestVault::initializeAndUnlock()
         QVERIFY(vault.fileExists());
         QVERIFY(!vault.isUnlocked());
         QVERIFY(vault.entries().isEmpty());
-        QVERIFY(vault.unlock(QStringLiteral("hunter2")));
+        QVERIFY(vault.unlock(QStringLiteral("hunter2-strong-passphrase")));
         QVERIFY(vault.isUnlocked());
     }
 }
@@ -51,7 +52,7 @@ void TestVault::wrongPasswordRejected()
     QVERIFY(dir.isValid());
     const QString path = dir.filePath(QStringLiteral("vault.bin"));
     PasswordVault writer(path);
-    QVERIFY(writer.initialize(QStringLiteral("correct")));
+    QVERIFY(writer.initialize(QStringLiteral("correct-strong-passphrase")));
 
     PasswordVault reader(path);
     QVERIFY(!reader.unlock(QStringLiteral("wrong-password")));
@@ -59,7 +60,7 @@ void TestVault::wrongPasswordRejected()
     QCOMPARE(reader.lastError(), QStringLiteral("wrong master password"));
     QVERIFY(reader.entries().isEmpty());
 
-    QVERIFY(reader.unlock(QStringLiteral("correct")));
+    QVERIFY(reader.unlock(QStringLiteral("correct-strong-passphrase")));
     QVERIFY(reader.isUnlocked());
 }
 
@@ -71,7 +72,7 @@ void TestVault::crudRoundtripPersists()
     QString entryId;
     {
         PasswordVault vault(path);
-        QVERIFY(vault.initialize(QStringLiteral("secret")));
+        QVERIFY(vault.initialize(QStringLiteral("secret-strong-passphrase")));
         entryId = vault.addEntry([] {
             VaultEntry e;
             e.site = QStringLiteral("example.com");
@@ -85,7 +86,7 @@ void TestVault::crudRoundtripPersists()
     }
     {
         PasswordVault vault(path);
-        QVERIFY(vault.unlock(QStringLiteral("secret")));
+        QVERIFY(vault.unlock(QStringLiteral("secret-strong-passphrase")));
         QCOMPARE(vault.entries().size(), 1);
         const VaultEntry loaded = vault.entry(entryId);
         QCOMPARE(loaded.site, QStringLiteral("example.com"));
@@ -106,7 +107,7 @@ void TestVault::crudRoundtripPersists()
     }
     {
         PasswordVault vault(path);
-        QVERIFY(vault.unlock(QStringLiteral("secret")));
+        QVERIFY(vault.unlock(QStringLiteral("secret-strong-passphrase")));
         QCOMPARE(vault.entries().size(), 0);
     }
 }
@@ -116,7 +117,7 @@ void TestVault::lockClearsMemory()
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     PasswordVault vault(dir.filePath(QStringLiteral("vault.bin")));
-    QVERIFY(vault.initialize(QStringLiteral("secret")));
+    QVERIFY(vault.initialize(QStringLiteral("secret-strong-passphrase")));
     const QString id = vault.addEntry([] {
         VaultEntry e;
         e.site = QStringLiteral("example.com");
@@ -138,7 +139,7 @@ void TestVault::lockClearsMemory()
     QCOMPARE(spy.count(), 1);
     QCOMPARE(spy.at(0).at(0).toBool(), false);
 
-    QVERIFY(vault.unlock(QStringLiteral("secret")));
+    QVERIFY(vault.unlock(QStringLiteral("secret-strong-passphrase")));
     QCOMPARE(vault.entries().size(), 1);
 }
 
@@ -149,22 +150,22 @@ void TestVault::changeMasterPassword()
     const QString path = dir.filePath(QStringLiteral("vault.bin"));
     {
         PasswordVault vault(path);
-        QVERIFY(vault.initialize(QStringLiteral("old-pass")));
+        QVERIFY(vault.initialize(QStringLiteral("old-pass-strong-passphrase")));
         vault.addEntry([] {
             VaultEntry e;
             e.site = QStringLiteral("example.com");
             e.password = QStringLiteral("pw");
             return e;
         }());
-        QVERIFY(!vault.changeMasterPassword(QStringLiteral("wrong"), QStringLiteral("new-pass")));
-        QVERIFY(vault.changeMasterPassword(QStringLiteral("old-pass"), QStringLiteral("new-pass")));
+        QVERIFY(!vault.changeMasterPassword(QStringLiteral("wrong"), QStringLiteral("new-pass-strong-passphrase")));
+        QVERIFY(vault.changeMasterPassword(QStringLiteral("old-pass-strong-passphrase"), QStringLiteral("new-pass-strong-passphrase")));
         QVERIFY(vault.isUnlocked());
         QCOMPARE(vault.entries().size(), 1);
     }
     {
         PasswordVault vault(path);
-        QVERIFY(!vault.unlock(QStringLiteral("old-pass")));
-        QVERIFY(vault.unlock(QStringLiteral("new-pass")));
+        QVERIFY(!vault.unlock(QStringLiteral("old-pass-strong-passphrase")));
+        QVERIFY(vault.unlock(QStringLiteral("new-pass-strong-passphrase")));
         QCOMPARE(vault.entries().size(), 1);
         QCOMPARE(vault.entries().at(0).password, QStringLiteral("pw"));
     }
@@ -175,7 +176,7 @@ void TestVault::entryForUrlMatching()
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     PasswordVault vault(dir.filePath(QStringLiteral("vault.bin")));
-    QVERIFY(vault.initialize(QStringLiteral("secret")));
+    QVERIFY(vault.initialize(QStringLiteral("secret-strong-passphrase")));
 
     VaultEntry direct;
     direct.site = QStringLiteral("example.com");
@@ -194,7 +195,7 @@ void TestVault::entryForUrlMatching()
     const QString passkeyId = vault.addEntry(passkey);
 
     QCOMPARE(vault.entryForUrl(QUrl(QStringLiteral("https://example.com/a"))).id, directId);
-    QCOMPARE(vault.entryForUrl(QUrl(QStringLiteral("https://www.example.com"))).id, directId);
+    QVERIFY(vault.entryForUrl(QUrl(QStringLiteral("https://www.example.com"))).id.isEmpty());
     QCOMPARE(vault.entryForUrl(QUrl(QStringLiteral("https://shop.example.com/x"))).id, subId);
     QVERIFY(vault.entryForUrl(QUrl(QStringLiteral("https://other.test"))).id.isEmpty());
     QVERIFY(vault.entryForUrl(QUrl()).id.isEmpty());
@@ -207,8 +208,13 @@ void TestVault::rejectsBadInput()
     QVERIFY(dir.isValid());
     PasswordVault vault(dir.filePath(QStringLiteral("vault.bin")));
     QVERIFY(!vault.initialize(QStringLiteral("ab")));
-    QVERIFY(vault.initialize(QStringLiteral("good-pass")));
-    QVERIFY(!vault.initialize(QStringLiteral("good-pass"))); // already initialized
+    QVERIFY(!vault.initialize(QStringLiteral("123456789012345")));
+    QVERIFY(!vault.initialize(QStringLiteral("                ")));
+    QVERIFY(!vault.initialize(QStringLiteral("aaaaaaaaaaaaaaaa")));
+    QVERIFY(vault.initialize(QStringLiteral("good-pass-strong-passphrase")));
+    QVERIFY(!vault.changeMasterPassword(QStringLiteral("good-pass-strong-passphrase"),
+                                        QStringLiteral("123456789012345")));
+    QVERIFY(!vault.initialize(QStringLiteral("good-pass-strong-passphrase"))); // already initialized
     QCOMPARE(vault.lastError(), QStringLiteral("vault already initialized"));
 
     QVERIFY(vault.addEntry(VaultEntry{QString(), QStringLiteral("   "),
@@ -224,7 +230,7 @@ void TestVault::passkeyEntriesSupported()
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     PasswordVault vault(dir.filePath(QStringLiteral("vault.bin")));
-    QVERIFY(vault.initialize(QStringLiteral("secret")));
+    QVERIFY(vault.initialize(QStringLiteral("secret-strong-passphrase")));
 
     VaultEntry passkey;
     passkey.site = QStringLiteral("example.com");
@@ -235,6 +241,26 @@ void TestVault::passkeyEntriesSupported()
     QVERIFY(!id.isEmpty());
     QCOMPARE(vault.entry(id).type, QStringLiteral("passkey"));
     QVERIFY(vault.entryForUrl(QUrl(QStringLiteral("https://example.com"))).id.isEmpty());
+}
+
+void TestVault::unlocksLegacyShortPassword()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("vault.bin"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    const QByteArray legacy = QByteArray::fromBase64(
+        "TkVCVkFVTFQAAQIDBAUGBwgJCgsMDQ4PAAECAwQFBgcICQoLSb6FxkqLKx6xOy4Trl5BASzX");
+    QCOMPARE(file.write(legacy), legacy.size());
+    file.close();
+
+    PasswordVault vault(path);
+    QVERIFY(vault.unlock(QStringLiteral("old4")));
+    QVERIFY(vault.changeMasterPassword(QStringLiteral("old4"),
+                                       QStringLiteral("a longer passphrase")));
+    vault.lock();
+    QVERIFY(vault.unlock(QStringLiteral("a longer passphrase")));
 }
 
 QTEST_GUILESS_MAIN(TestVault)

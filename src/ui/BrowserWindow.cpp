@@ -1,6 +1,7 @@
 #include "ui/BrowserWindow.h"
 
 #include "browser/Browser.h"
+#include "browser/DownloadManager.h"
 #include "core/ActionRegistry.h"
 #include "core/Bookmarks.h"
 #include "core/UserCatalog.h"
@@ -8,6 +9,9 @@
 #include "core/PasswordVault.h"
 #include "core/Settings.h"
 #include "ui/NameColorDialog.h"
+#include "ui/DownloadsDialog.h"
+#include "ui/NotesDialog.h"
+#include "ui/TrackerRadarDialog.h"
 #include "ui/NewTabPage.h"
 #include "ui/SettingsForm.h"
 #include "ui/Style.h"
@@ -26,6 +30,9 @@
 #include <QCursor>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -41,6 +48,7 @@
 #include <QProgressBar>
 #include <QResizeEvent>
 #include <QStatusBar>
+#include <QStandardPaths>
 #include <QStyle>
 #include <QTabBar>
 #include <QTabWidget>
@@ -50,6 +58,7 @@
 #include <QUuid>
 #include <QVBoxLayout>
 #include <QWebEngineHistory>
+#include <QWebEngineDownloadRequest>
 #include <QWebEngineProfile>
 
 namespace {
@@ -85,6 +94,7 @@ const QString kExtractPasswordScript = QStringLiteral(R"JS(
 
 const QString kAutofillScript = QStringLiteral(R"JS(
 (function (a) {
+  if (location.origin !== a[2] || location.protocol !== 'https:') { return 'wrong-origin'; }
   var pws = document.querySelectorAll('input[type="password"]');
   if (!pws.length) { return 'no-field'; }
   var pw = null;
@@ -110,7 +120,7 @@ const QString kAutofillScript = QStringLiteral(R"JS(
     pw.dispatchEvent(new Event('change', { bubbles: true }));
   }
   return 'filled';
-})JS");
+}))JS");
 
 QList<QPointer<BrowserWindow>> g_windows;
 
@@ -299,6 +309,12 @@ BrowserWindow::BrowserWindow(Browser *browser, QWidget *parent)
                       QKeySequence(Qt::CTRL | Qt::Key_Comma), [this] {
         openSettingsTab();
     });
+    m_actions->define(QStringLiteral("downloads.open"), tr("Downloads"),
+                      QKeySequence(Qt::CTRL | Qt::Key_J), [this] { showDownloads(); });
+    m_actions->define(QStringLiteral("notes.open"), tr("Quick Notes"),
+                      QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N), [this] { showNotes(); });
+    m_actions->define(QStringLiteral("radar.open"), tr("Tracker Radar"), {},
+                      [this] { showTrackerRadar(); });
     m_actions->define(QStringLiteral("settings.users"), tr("Users…"), {},
                       [this] { openSettingsTab(QStringLiteral("users")); });
     m_actions->define(QStringLiteral("bookmark.add"), tr("Bookmark This Page…"),
@@ -382,6 +398,12 @@ BrowserWindow::BrowserWindow(Browser *browser, QWidget *parent)
     m_reloadAction->setIcon(QIcon(QStringLiteral(":/icons/reload.svg")));
     m_actions->action(QStringLiteral("nav.home"))
         ->setIcon(QIcon(QStringLiteral(":/icons/home.svg")));
+    m_actions->action(QStringLiteral("downloads.open"))
+        ->setIcon(QIcon(QStringLiteral(":/icons/download.svg")));
+    m_actions->action(QStringLiteral("notes.open"))
+        ->setIcon(QIcon(QStringLiteral(":/icons/folder.svg")));
+    m_actions->action(QStringLiteral("radar.open"))
+        ->setIcon(QIcon(QStringLiteral(":/icons/lock.svg")));
 
     QToolBar *toolbar = addToolBar(tr("Navigation"));
     toolbar->setObjectName(QStringLiteral("navToolbar"));
@@ -419,6 +441,37 @@ BrowserWindow::BrowserWindow(Browser *browser, QWidget *parent)
     applyUILayout();
 
     if (m_browser) {
+        connect(m_browser->downloads(), &DownloadManager::requested, this,
+                [this](QWebEngineDownloadRequest *request) {
+            if (!request) {
+                return;
+            }
+            QPointer<QWebEngineDownloadRequest> guard(request);
+            QPointer<BrowserWindow> windowGuard(this);
+            QString directory = request->downloadDirectory();
+            if (directory.isEmpty()) {
+                directory = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+            }
+            if (directory.isEmpty()) {
+                directory = QDir::homePath();
+            }
+            QString fileName = QFileInfo(request->downloadFileName()).fileName();
+            if (fileName.isEmpty() || fileName == QLatin1String(".")
+                || fileName == QLatin1String("..")) {
+                fileName = QStringLiteral("download");
+            }
+            const QString path = QFileDialog::getSaveFileName(
+                this, tr("Save download"), QDir(directory).filePath(fileName));
+            if (!guard) {
+                return;
+            }
+            if (!windowGuard || path.isEmpty()) {
+                guard->cancel();
+                return;
+            }
+            m_browser->downloads()->start(guard, path);
+            showDownloads();
+        });
         ramSaverAction->setChecked(m_browser->settings()->ramSaverEnabled());
         connect(m_browser->settings(), &Settings::ramSaverChanged, this, [this](bool on) {
             m_actions->action(QStringLiteral("performance.ramSaver"))->setChecked(on);
@@ -465,6 +518,64 @@ BrowserWindow::BrowserWindow(Browser *browser, QWidget *parent)
     applyTabPosition();
     resize(1280, 800);
     updateChrome();
+}
+
+void BrowserWindow::showDownloads()
+{
+    if (!m_browser) {
+        return;
+    }
+    if (!m_downloadsDialog) {
+        m_downloadsDialog = new DownloadsDialog(m_browser->downloads(), this);
+    }
+    m_downloadsDialog->show();
+    m_downloadsDialog->raise();
+    m_downloadsDialog->activateWindow();
+}
+
+void BrowserWindow::showNotes()
+{
+    if (!m_browser) {
+        return;
+    }
+    if (!m_notesDialog) {
+        m_notesDialog = new NotesDialog(m_browser->notes(), [this](bool selection) {
+            Note note;
+            TabContent *tab = currentTab();
+            if (!tab || tab->isShowingNewTab() || tab->isShowingCrash()) {
+                return note;
+            }
+            WebPage *page = tab->webView()->webPage();
+            QUrl url = page->url();
+            if ((url.scheme() != QLatin1String("http") && url.scheme() != QLatin1String("https"))
+                || url.host().isEmpty()) {
+                return note;
+            }
+            url.setUserInfo(QString());
+            note.pageUrl = url;
+            note.title = page->title();
+            if (selection) {
+                note.content = page->selectedText();
+            }
+            return note;
+        }, this);
+    }
+    m_notesDialog->show();
+    m_notesDialog->raise();
+    m_notesDialog->activateWindow();
+}
+
+void BrowserWindow::showTrackerRadar()
+{
+    if (!m_browser) {
+        return;
+    }
+    if (!m_trackerRadarDialog) {
+        m_trackerRadarDialog = new TrackerRadarDialog(m_browser->requestInterceptor(), this);
+    }
+    m_trackerRadarDialog->show();
+    m_trackerRadarDialog->raise();
+    m_trackerRadarDialog->activateWindow();
 }
 
 // ---------------------------------------------------------------------------
@@ -1500,7 +1611,6 @@ void BrowserWindow::wireTab(TabContent *content)
         }
         updateChrome();
         if (ok) {
-            tryAutofill(content->webView()->webPage());
             QPointer<TabContent> guard(content);
             QTimer::singleShot(700, content->webView()->webPage(), [this, guard] {
                 if (guard) {
@@ -1676,6 +1786,7 @@ void BrowserWindow::showSiteInfo()
     protection->setEnabled(false);
     menu.addAction(tr("Privacy settings…"), this,
                    [this] { openSettingsTab(QStringLiteral("privacy")); });
+    menu.addAction(m_actions->action(QStringLiteral("radar.open")));
     menu.exec(QCursor::pos());
 }
 
@@ -1721,6 +1832,36 @@ void BrowserWindow::applyUILayout()
             addToolbarComponent(item.component);
         }
     }
+    QAction *downloadsAction = m_actions->action(QStringLiteral("downloads.open"));
+    m_toolbar->addAction(downloadsAction);
+    if (auto *button = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(downloadsAction))) {
+        button->setObjectName(QStringLiteral("downloadsButton"));
+        button->setProperty("toolbarIcon", true);
+        button->setAutoRaise(true);
+        button->setFixedSize(38, 38);
+        button->setToolTip(tr("Downloads (Ctrl+J)"));
+    }
+    m_toolbarActions.append(downloadsAction);
+    QAction *notesAction = m_actions->action(QStringLiteral("notes.open"));
+    m_toolbar->addAction(notesAction);
+    if (auto *button = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(notesAction))) {
+        button->setObjectName(QStringLiteral("notesButton"));
+        button->setProperty("toolbarIcon", true);
+        button->setAutoRaise(true);
+        button->setFixedSize(38, 38);
+        button->setToolTip(tr("Quick Notes (Ctrl+Shift+N)"));
+    }
+    m_toolbarActions.append(notesAction);
+    QAction *radarAction = m_actions->action(QStringLiteral("radar.open"));
+    m_toolbar->addAction(radarAction);
+    if (auto *button = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(radarAction))) {
+        button->setObjectName(QStringLiteral("radarButton"));
+        button->setProperty("toolbarIcon", true);
+        button->setAutoRaise(true);
+        button->setFixedSize(38, 38);
+        button->setToolTip(tr("Tracker Radar"));
+    }
+    m_toolbarActions.append(radarAction);
     const UiLayout::UiToolbarMetrics metrics = UiLayout::toolbarMetrics(cfg.toolbar);
     m_toolbar->setIconSize(QSize(metrics.iconSize, metrics.iconSize));
     m_toolbar->setMinimumHeight(metrics.height);
@@ -1998,12 +2139,14 @@ void BrowserWindow::tryAutofill(WebPage *page)
     if (!m_browser || !page) {
         return;
     }
+    if (!currentTab() || currentTab()->webView()->webPage() != page) {
+        return;
+    }
     PasswordVault *vault = m_browser->passwordVault();
     if (!vault || !vault->isUnlocked()) {
         return;
     }
-    if (page->url().scheme() != QLatin1String("http")
-        && page->url().scheme() != QLatin1String("https")) {
+    if (page->url().scheme() != QLatin1String("https")) {
         return;
     }
     const VaultEntry entry = vault->entryForUrl(page->url());
@@ -2011,18 +2154,45 @@ void BrowserWindow::tryAutofill(WebPage *page)
         || entry.password.isEmpty()) {
         return;
     }
-    const QByteArray args =
-        QJsonDocument(QJsonArray{entry.username, entry.password})
-            .toJson(QJsonDocument::Compact);
-    const QString script =
-        kAutofillScript + QLatin1Char('(') + QString::fromUtf8(args)
-        + QLatin1String(");");
     QPointer<WebPage> guard(page);
-    page->runJavaScript(script, [guard](const QVariant &result) {
-        if (guard && result.toString() == QLatin1String("filled")) {
-            qCInfo(lcCosmic).noquote()
-                << "autofill applied to" << guard->url().host();
+    QPointer<BrowserWindow> windowGuard(this);
+    const QUrl expectedUrl = page->url();
+    const QString entryId = entry.id;
+    page->runJavaScript(QStringLiteral("!!document.querySelector('input[type=\"password\"]')"),
+                        [this, guard, windowGuard, expectedUrl, entryId](const QVariant &result) {
+        if (!windowGuard || !guard || guard->url() != expectedUrl || !currentTab()
+            || currentTab()->webView()->webPage() != guard || !result.toBool()) {
+            return;
         }
+        if (QMessageBox::question(this, tr("Password vault"),
+                                  tr("Fill saved credentials for %1?").arg(expectedUrl.host()),
+                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
+            != QMessageBox::Yes) {
+            return;
+        }
+        if (!windowGuard || !guard || guard->url() != expectedUrl || !m_browser || !currentTab()
+            || currentTab()->webView()->webPage() != guard) {
+            return;
+        }
+        PasswordVault *currentVault = m_browser->passwordVault();
+        if (!currentVault || !currentVault->isUnlocked()) {
+            return;
+        }
+        const VaultEntry current = currentVault->entryForUrl(expectedUrl);
+        if (current.id != entryId || current.password.isEmpty()) {
+            return;
+        }
+        QUrl originUrl = expectedUrl.adjusted(QUrl::RemovePath | QUrl::RemoveQuery
+                                              | QUrl::RemoveFragment | QUrl::RemoveUserInfo);
+        if (originUrl.port() == 443) {
+            originUrl.setPort(-1);
+        }
+        const QString origin = originUrl.toString();
+        const QByteArray args = QJsonDocument(QJsonArray{current.username, current.password, origin})
+                                    .toJson(QJsonDocument::Compact);
+        const QString script = kAutofillScript + QLatin1Char('(') + QString::fromUtf8(args)
+            + QLatin1String(");");
+        guard->runJavaScript(script);
     });
 }
 
@@ -2079,7 +2249,8 @@ void BrowserWindow::promptSavePassword(const QUrl &url, const QString &username,
             this, tr("Password vault"),
             vault->fileExists()
                 ? tr("Vault locked — master password:")
-                : tr("Choose a master password for the new vault (4+ characters):"),
+                : tr("Choose a master password for the new vault (16+ characters, "
+                     "including 4 distinct non-space characters):"),
             QLineEdit::Password, QString(), &ok);
         if (!ok || master.isEmpty()) {
             return;

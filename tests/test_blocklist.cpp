@@ -19,7 +19,40 @@ private slots:
     void statisticsCountOnlyBlocks();
     void userRulesParsing();
     void messyRuleNormalization();
+    void radarRecordsRealMatchesAndClears();
 };
+
+void TestBlocklist::radarRecordsRealMatchesAndClears()
+{
+    BlocklistInterceptor interceptor;
+    QVERIFY(interceptor.tryBlock(QUrl(QStringLiteral("https://ads.doubleclick.net/a?token=secret")),
+                                 QUrl(QStringLiteral("https://source.example/page?private=1"))));
+    QVERIFY(interceptor.tryBlock(QUrl(QStringLiteral("https://google-analytics.com/pixel"))));
+    QVERIFY(!interceptor.tryBlock(QUrl(QStringLiteral("https://example.com/"))));
+    auto stats = interceptor.statistics();
+    QCOMPARE(stats.blocked, 2);
+    QCOMPARE(stats.matchedRules, 2);
+    QCOMPARE(stats.recent.size(), 2);
+    QCOMPARE(stats.recent.first().host, QStringLiteral("ads.doubleclick.net"));
+    QCOMPARE(stats.recent.first().site, QStringLiteral("source.example"));
+    QCOMPARE(stats.recent.first().rule, QStringLiteral("doubleclick.net"));
+    QCOMPARE(stats.recent.first().category, BlocklistInterceptor::Category::Advertising);
+    QCOMPARE(stats.recent.last().category, BlocklistInterceptor::Category::AnalyticsOrTracking);
+    QVERIFY(stats.recent.last().site.isEmpty());
+    for (int i = 0; i < 501; ++i) {
+        QVERIFY(interceptor.tryBlock(QUrl(QStringLiteral("https://doubleclick.net/"))));
+    }
+    stats = interceptor.statistics();
+    QCOMPARE(stats.blocked, 503);
+    QCOMPARE(stats.matchedRules, 2);
+    QCOMPARE(stats.recent.size(), 500);
+    QSignalSpy spy(&interceptor, &BlocklistInterceptor::blockedCountChanged);
+    interceptor.clearStatistics();
+    QCOMPARE(interceptor.blockedCount(), 0);
+    QVERIFY(interceptor.statistics().recent.isEmpty());
+    QCOMPARE(interceptor.statistics().matchedRules, 0);
+    QCOMPARE(spy.last().first().toInt(), 0);
+}
 
 void TestBlocklist::builtinRulesLoaded()
 {

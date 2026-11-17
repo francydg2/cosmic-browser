@@ -437,9 +437,10 @@ SettingsForm::SettingsForm(Settings *settings, BlocklistInterceptor *interceptor
         const int count = m_interceptor->blockedCount();
         m_blockedLabel->setText(tr("Blocked requests this session: %1").arg(count));
         connect(m_interceptor, &BlocklistInterceptor::blockedCountChanged, m_blockedLabel,
-                [label = m_blockedLabel](int total) {
+                [label = m_blockedLabel, interceptor = m_interceptor](int) {
                     label->setText(
-                        SettingsForm::tr("Blocked requests this session: %1").arg(total));
+                        SettingsForm::tr("Blocked requests this session: %1")
+                            .arg(interceptor->blockedCount()));
                 });
     } else {
         m_blockedLabel->hide();
@@ -913,7 +914,8 @@ void SettingsForm::refreshVaultWidgets()
     }
     if (!m_vault->fileExists()) {
         m_vaultStatusLabel->setText(
-            tr("No vault yet — choose a master password (4+ characters) "
+            tr("No vault yet — choose a master password (16+ characters, including "
+               "4 distinct non-space characters) "
                "and press “Create vault”."));
         m_vaultMasterButton->setText(tr("Create vault"));
         m_vaultMasterButton->setEnabled(true);
@@ -985,11 +987,6 @@ void SettingsForm::vaultMasterButtonClicked()
     const QString master = m_vaultMasterEdit->text();
     bool ok = false;
     if (!m_vault->fileExists()) {
-        if (master.size() < 4) {
-            QMessageBox::warning(this, tr("Password vault"),
-                                 tr("The master password needs at least 4 characters."));
-            return;
-        }
         ok = m_vault->initialize(master);
     } else {
         ok = m_vault->unlock(master);

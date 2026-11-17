@@ -14,6 +14,7 @@ set(NEBULA_TEST_RES_FILES
     ${CMAKE_SOURCE_DIR}/resources/icons/close.svg
     ${CMAKE_SOURCE_DIR}/resources/icons/close-active.svg
     ${CMAKE_SOURCE_DIR}/resources/icons/arrow-down.svg
+    ${CMAKE_SOURCE_DIR}/resources/icons/download.svg
     ${CMAKE_SOURCE_DIR}/resources/icons/check.svg
     ${CMAKE_SOURCE_DIR}/resources/icons/ai.svg
     ${CMAKE_SOURCE_DIR}/resources/icons/star.svg
@@ -89,6 +90,11 @@ add_executable(cosmic_test_bookmarks test_bookmarks.cpp)
 target_include_directories(cosmic_test_bookmarks PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(cosmic_test_bookmarks PRIVATE cosmic_core Qt6::Test)
 add_test(NAME bookmarks COMMAND cosmic_test_bookmarks)
+
+add_executable(cosmic_test_notes test_notes.cpp)
+target_include_directories(cosmic_test_notes PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(cosmic_test_notes PRIVATE cosmic_core Qt6::Test)
+add_test(NAME notes COMMAND cosmic_test_notes)
 
 # 6d) Encrypted password vault (OpenSSL AES-256-GCM + PBKDF2).
 add_executable(cosmic_test_vault test_vault.cpp)

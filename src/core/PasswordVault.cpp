@@ -7,10 +7,14 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <QSet>
 #include <QUuid>
 
 #include <openssl/evp.h>
+#include <openssl/crypto.h>
 #include <openssl/rand.h>
+
+#include <utility>
 
 namespace {
 
@@ -32,12 +36,49 @@ const auto kKeyType = "type";
 const auto kKeyCreated = "created";
 const auto kKeyUpdated = "updated";
 
+class ClearBytes
+{
+public:
+    explicit ClearBytes(QByteArray &bytes) : m_bytes(bytes) {}
+    ~ClearBytes()
+    {
+        if (!m_bytes.isEmpty()) {
+            OPENSSL_cleanse(m_bytes.data(), static_cast<size_t>(m_bytes.size()));
+        }
+    }
+
+private:
+    QByteArray &m_bytes;
+};
+
+bool acceptableMasterPassword(const QString &password)
+{
+    auto characters = password.toUcs4();
+    QSet<char32_t> distinct;
+    for (char32_t character : characters) {
+        if (!QChar::isSpace(character)) {
+            distinct.insert(character);
+        }
+    }
+    const bool acceptable = characters.size() >= PasswordVault::minimumMasterPasswordLength
+        && distinct.size() >= 4;
+    if (!characters.isEmpty()) {
+        OPENSSL_cleanse(characters.data(), static_cast<size_t>(characters.size()) * sizeof(char32_t));
+    }
+    return acceptable;
+}
+
 } // namespace
 
 PasswordVault::PasswordVault(const QString &filePath, QObject *parent)
     : QObject(parent)
     , m_path(filePath)
 {
+}
+
+PasswordVault::~PasswordVault()
+{
+    lock();
 }
 
 bool PasswordVault::fileExists() const
@@ -66,12 +107,14 @@ QByteArray PasswordVault::randomBytes(int count)
 QByteArray PasswordVault::deriveKey(const QString &password, const QByteArray &salt)
 {
     QByteArray key(kKeyLen, Qt::Uninitialized);
-    const QByteArray pass = password.toUtf8();
+    QByteArray pass = password.toUtf8();
+    const ClearBytes clearPass(pass);
     if (PKCS5_PBKDF2_HMAC(pass.constData(), pass.size(),
                           reinterpret_cast<const unsigned char *>(salt.constData()),
                           salt.size(), kPbkdf2Iterations, EVP_sha256(), kKeyLen,
                           reinterpret_cast<unsigned char *>(key.data()))
         != 1) {
+        OPENSSL_cleanse(key.data(), static_cast<size_t>(key.size()));
         return {};
     }
     return key;
@@ -148,6 +191,7 @@ QByteArray PasswordVault::aesGcmDecrypt(const QByteArray &cipher, const QByteArr
     EVP_CIPHER_CTX_free(ctx);
     *okOut = ok;
     if (!ok) {
+        OPENSSL_cleanse(plain.data(), static_cast<size_t>(plain.size()));
         return {};
     }
     plain.truncate(total);
@@ -255,26 +299,28 @@ bool PasswordVault::decryptFile(const QString &password, QByteArray *plainOut,
     const QByteArray tag = data.mid(kMagicLen + kSaltLen + kIvLen, kTagLen);
     const QByteArray cipher = data.mid(kHeaderLen);
 
-    const QByteArray key = deriveKey(password, salt);
+    QByteArray key = deriveKey(password, salt);
+    const ClearBytes clearKey(key);
     if (key.size() != kKeyLen) {
         *errorOut = QStringLiteral("crypto initialization failed");
         return false;
     }
     bool ok = false;
-    const QByteArray plain = aesGcmDecrypt(cipher, key, iv, tag, &ok);
+    QByteArray plain = aesGcmDecrypt(cipher, key, iv, tag, &ok);
+    const ClearBytes clearPlain(plain);
     if (!ok) {
         *errorOut = QStringLiteral("wrong master password");
         return false;
     }
-    *plainOut = plain;
+    *plainOut = std::move(plain);
     *saltOut = salt;
     return true;
 }
 
 bool PasswordVault::initialize(const QString &masterPassword)
 {
-    if (masterPassword.size() < 4) {
-        setError(QStringLiteral("master password too short (min 4)"));
+    if (!acceptableMasterPassword(masterPassword)) {
+        setError(QStringLiteral("master password requires at least 16 characters and 4 distinct non-space characters"));
         return false;
     }
     if (fileExists()) {
@@ -282,7 +328,8 @@ bool PasswordVault::initialize(const QString &masterPassword)
         return false;
     }
     const QByteArray salt = randomBytes(kSaltLen);
-    const QByteArray key = deriveKey(masterPassword, salt);
+    QByteArray key = deriveKey(masterPassword, salt);
+    const ClearBytes clearKey(key);
     if (salt.size() != kSaltLen || key.size() != kKeyLen) {
         setError(QStringLiteral("crypto initialization failed"));
         return false;
@@ -293,7 +340,7 @@ bool PasswordVault::initialize(const QString &masterPassword)
         return false;
     }
     m_salt = salt;
-    m_key = key;
+    m_key = QByteArray(key.constData(), key.size());
     m_entries.clear();
     m_unlocked = true;
     setError({});
@@ -313,6 +360,7 @@ bool PasswordVault::unlock(const QString &masterPassword)
         return false;
     }
     QByteArray plain;
+    const ClearBytes clearPlain(plain);
     QByteArray salt;
     QString error;
     if (!decryptFile(masterPassword, &plain, &salt, &error)) {
@@ -340,7 +388,14 @@ void PasswordVault::lock()
         return;
     }
     m_unlocked = false;
-    m_key.fill(0);
+    if (!m_key.isEmpty()) {
+        OPENSSL_cleanse(m_key.data(), static_cast<size_t>(m_key.size()));
+        m_key.clear();
+    }
+    for (VaultEntry &entryData : m_entries) {
+        entryData.password.fill(QChar(u'\0'));
+        entryData.note.fill(QChar(u'\0'));
+    }
     m_entries.clear();
     emit lockStateChanged(false);
     emit entriesChanged();
@@ -348,11 +403,12 @@ void PasswordVault::lock()
 
 bool PasswordVault::changeMasterPassword(const QString &current, const QString &neu)
 {
-    if (neu.size() < 4) {
-        setError(QStringLiteral("master password too short (min 4)"));
+    if (!acceptableMasterPassword(neu)) {
+        setError(QStringLiteral("master password requires at least 16 characters and 4 distinct non-space characters"));
         return false;
     }
     QByteArray plain;
+    const ClearBytes clearPlain(plain);
     QByteArray salt;
     QString error;
     if (!decryptFile(current, &plain, &salt, &error)) {
@@ -360,7 +416,8 @@ bool PasswordVault::changeMasterPassword(const QString &current, const QString &
         return false;
     }
     const QByteArray newSalt = randomBytes(kSaltLen);
-    const QByteArray newKey = deriveKey(neu, newSalt);
+    QByteArray newKey = deriveKey(neu, newSalt);
+    const ClearBytes clearNewKey(newKey);
     if (newSalt.size() != kSaltLen || newKey.size() != kKeyLen) {
         setError(QStringLiteral("crypto initialization failed"));
         return false;
@@ -370,7 +427,10 @@ bool PasswordVault::changeMasterPassword(const QString &current, const QString &
         return false;
     }
     m_salt = newSalt;
-    m_key = newKey;
+    if (!m_key.isEmpty()) {
+        OPENSSL_cleanse(m_key.data(), static_cast<size_t>(m_key.size()));
+    }
+    m_key = QByteArray(newKey.constData(), newKey.size());
     m_entries = parseEntries(plain);
     m_unlocked = true;
     setError({});
@@ -386,7 +446,9 @@ bool PasswordVault::persist()
         return false;
     }
     QString error;
-    if (!encryptAndWrite(serializeEntries(m_entries), m_key, m_salt, &error)) {
+    QByteArray plain = serializeEntries(m_entries);
+    const ClearBytes clearPlain(plain);
+    if (!encryptAndWrite(plain, m_key, m_salt, &error)) {
         setError(error);
         return false;
     }
@@ -512,18 +574,6 @@ VaultEntry PasswordVault::entryForUrl(const QUrl &url) const
             continue;
         }
         if (host == site) {
-            return entryData;
-        }
-    }
-    for (const VaultEntry &entryData : m_entries) {
-        if (entryData.type != QLatin1String("password")) {
-            continue;
-        }
-        const QString site = siteHost(entryData.site);
-        if (site.isEmpty()) {
-            continue;
-        }
-        if (host.endsWith(QLatin1Char('.') + site)) {
             return entryData;
         }
     }

@@ -17,29 +17,41 @@
 #include <QtTest>
 
 #include <QApplication>
+#include <QAbstractButton>
 #include <QDir>
 #include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
+#include <QProgressBar>
 #include <QSignalSpy>
+#include <QSharedPointer>
 #include <QStyle>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QTableWidget>
 #include <QMenu>
+#include <QMessageBox>
 #include <QContextMenuEvent>
+#include <QFileDialog>
 #include <QSpinBox>
 #include <QTimer>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include <QToolBar>
 #include <QToolButton>
 #include <QUuid>
 #include <QWebEngineProfile>
+#include <QWebEngineDownloadRequest>
 
 #include "browser/Browser.h"
+#include "browser/DownloadManager.h"
 #include "browser/SingleInstance.h"
 #include "core/ActionRegistry.h"
 #include "core/Bookmarks.h"
+#include "core/Notes.h"
 #include "core/UserCatalog.h"
 #include "core/LayoutEditor.h"
+#include "core/PasswordVault.h"
 #include "core/Settings.h"
 #include "ui/BrowserWindow.h"
 #include "ui/NameColorDialog.h"
@@ -59,6 +71,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QLineEdit>
+#include <QPlainTextEdit>
 #include <QStackedWidget>
 #include <QTemporaryDir>
 
@@ -122,6 +135,10 @@ private slots:
     void newTabPagePrivacyBadgeUpdates();
     void openUrlReusesPristineTab();
     void httpsNavigationThroughGui();
+    void autofillRequiresConfirmation();
+    void downloadsFromProfiles();
+    void quickNotesFromSelection();
+    void trackerRadarShowsBlockedRequests();
     void openCloseReopenTabs();
     void tabReordering();
     void createWindowRequests();
@@ -145,6 +162,332 @@ private slots:
     void tabGroups();
     void crashIsolation();
 };
+
+void TestBrowserWindow::trackerRadarShowsBlockedRequests()
+{
+    deleteAllBrowserWindows();
+    Browser browser;
+    BrowserWindow *window = makeWindow(browser);
+    QVERIFY(window);
+    window->present();
+    WebPage *page = window->activeWebPage();
+    QVERIFY(page);
+    QSignalSpy loaded(page, &QWebEnginePage::loadFinished);
+    page->setHtml(QStringLiteral("<html><body><img src='https://doubleclick.net/pixel'></body></html>"),
+                  QUrl(QStringLiteral("https://source.example/page")));
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty(), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(browser.requestInterceptor()->blockedCount() > 0, 10000);
+    QAction *action = findAction(window, QStringLiteral("radar.open"));
+    QVERIFY(action);
+    action->trigger();
+    auto *dialog = window->findChild<QDialog *>(QStringLiteral("trackerRadarDialog"));
+    QVERIFY(dialog);
+    auto *table = dialog->findChild<QTableWidget *>(QStringLiteral("radarTable"));
+    auto *clear = dialog->findChild<QPushButton *>(QStringLiteral("radarClearButton"));
+    QVERIFY(table && clear);
+    QVERIFY(table->rowCount() > 0);
+    QCOMPARE(table->item(0, 1)->text(), QStringLiteral("doubleclick.net"));
+    QCOMPARE(table->item(0, 2)->text(), QStringLiteral("source.example"));
+    clear->click();
+    QCOMPARE(browser.requestInterceptor()->blockedCount(), 0);
+    QTRY_COMPARE_WITH_TIMEOUT(table->rowCount(), 0, 5000);
+    deleteAllBrowserWindows();
+}
+
+void TestBrowserWindow::quickNotesFromSelection()
+{
+    deleteAllBrowserWindows();
+    Browser browser;
+    BrowserWindow *window = makeWindow(browser);
+    QVERIFY(window);
+    window->present();
+    WebPage *page = window->activeWebPage();
+    QVERIFY(page);
+    QSignalSpy loaded(page, &QWebEnginePage::loadFinished);
+    page->setHtml(QStringLiteral("<html><head><title>Example</title></head>"
+                                 "<body><p id='text'>A useful selection</p></body></html>"),
+                  QUrl(QStringLiteral("https://example.test/article")));
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty(), 10000);
+    page->runJavaScript(QStringLiteral(
+        "window.getSelection().selectAllChildren(document.getElementById('text'));"));
+    QTRY_COMPARE_WITH_TIMEOUT(page->selectedText(), QStringLiteral("A useful selection"), 10000);
+    QAction *action = findAction(window, QStringLiteral("notes.open"));
+    QVERIFY(action);
+    action->trigger();
+    auto *dialog = window->findChild<QDialog *>(QStringLiteral("notesDialog"));
+    QVERIFY(dialog);
+    auto *selection = dialog->findChild<QPushButton *>(QStringLiteral("selectionNoteButton"));
+    auto *title = dialog->findChild<QLineEdit *>(QStringLiteral("noteTitle"));
+    auto *category = dialog->findChild<QLineEdit *>(QStringLiteral("noteCategory"));
+    auto *search = dialog->findChild<QLineEdit *>(QStringLiteral("notesSearch"));
+    auto *list = dialog->findChild<QListWidget *>(QStringLiteral("notesList"));
+    QVERIFY(selection && title && category && search && list);
+    const int count = browser.notes()->items().size();
+    selection->click();
+    QCOMPARE(browser.notes()->items().size(), count + 1);
+    const QString id = browser.notes()->items().first().id;
+    QCOMPARE(browser.notes()->find(id).content, QStringLiteral("A useful selection"));
+    QCOMPARE(browser.notes()->find(id).pageUrl,
+             QUrl(QStringLiteral("https://example.test/article")));
+    category->setFocus();
+    QTest::keyClicks(category, "Research");
+    QTRY_COMPARE_WITH_TIMEOUT(browser.notes()->find(id).category, QStringLiteral("Research"), 5000);
+    search->setText(QStringLiteral("Research"));
+    QCOMPARE(list->count(), 1);
+    search->setText(QStringLiteral("not a matching note"));
+    QCOMPARE(list->count(), 0);
+    dialog->close();
+    deleteAllBrowserWindows();
+}
+
+void TestBrowserWindow::downloadsFromProfiles()
+{
+    deleteAllBrowserWindows();
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    const QByteArray payload(65536, 'x');
+    int interruptedRequests = 0;
+    bool recoverConnection = false;
+    connect(&server, &QTcpServer::newConnection, &server, [&] {
+        while (QTcpSocket *socket = server.nextPendingConnection()) {
+            QObject::connect(socket, &QTcpSocket::readyRead, socket,
+                             [socket, &payload, &interruptedRequests, &recoverConnection, buffer = QByteArray{}]() mutable {
+                buffer += socket->readAll();
+                if (!buffer.contains("\r\n\r\n")) {
+                    return;
+                }
+                if (buffer.startsWith("GET /interrupted ")) {
+                    ++interruptedRequests;
+                    const QByteArray headers = "Content-Type: application/octet-stream\r\n"
+                        "Content-Disposition: attachment; filename=\"interrupted.bin\"\r\n"
+                        "Accept-Ranges: bytes\r\nETag: \"cosmic-test\"\r\n";
+                    if (interruptedRequests == 1) {
+                        socket->write("HTTP/1.1 200 OK\r\n" + headers
+                                      + "Content-Length: 65536\r\nConnection: close\r\n\r\n"
+                                      + payload.left(32768));
+                    } else {
+                        const QRegularExpression range(QStringLiteral("(?i)range: bytes=(\\d+)-"));
+                        const auto match = range.match(QString::fromLatin1(buffer));
+                        const int offset = match.hasMatch() ? match.captured(1).toInt() : 0;
+                        if (offset > 0) {
+                            socket->write("HTTP/1.1 206 Partial Content\r\n" + headers
+                                          + "Content-Range: bytes " + QByteArray::number(offset)
+                                          + "-65535/65536\r\nContent-Length: "
+                                          + QByteArray::number(payload.size() - offset)
+                                          + "\r\nConnection: close\r\n\r\n"
+                                          + (recoverConnection ? payload.mid(offset) : QByteArray()));
+                        } else {
+                            socket->write("HTTP/1.1 200 OK\r\n" + headers
+                                          + "Content-Length: 65536\r\nConnection: close\r\n\r\n"
+                                          + (recoverConnection ? payload : payload.left(32768)));
+                        }
+                    }
+                    socket->disconnectFromHost();
+                    return;
+                }
+                if (buffer.startsWith("GET /slow ")) {
+                    socket->write("HTTP/1.1 200 OK\r\n"
+                                  "Content-Type: application/octet-stream\r\n"
+                                  "Content-Disposition: attachment; filename=\"slow.bin\"\r\n"
+                                  "X-Content-Type-Options: nosniff\r\n"
+                                  "Content-Length: 1000000\r\n\r\n"
+                                  "partial");
+                    return;
+                }
+                socket->write("HTTP/1.1 200 OK\r\n"
+                              "Content-Type: application/octet-stream\r\n"
+                              "Content-Disposition: attachment; filename=\"test.txt\"\r\n"
+                              "Content-Length: 12\r\nConnection: close\r\n\r\n"
+                              "cosmic-test!");
+                socket->disconnectFromHost();
+            });
+        }
+    });
+
+    Browser browser;
+    BrowserWindow *window = makeWindow(browser);
+    QVERIFY(window);
+    window->present();
+    QVERIFY(findAction(window, QStringLiteral("downloads.open")));
+    QVERIFY(window->findChild<QToolButton *>(QStringLiteral("downloadsButton")));
+
+    QString target = dir.filePath(QStringLiteral("first.txt"));
+    bool reject = false;
+    int dialogs = 0;
+    QTimer answerTimer;
+    connect(&answerTimer, &QTimer::timeout, [&] {
+        auto *dialog = qobject_cast<QFileDialog *>(QApplication::activeModalWidget());
+        if (!dialog) {
+            return;
+        }
+        ++dialogs;
+        if (reject) {
+            dialog->reject();
+        } else {
+            dialog->setDirectory(QFileInfo(target).absolutePath());
+            auto *name = dialog->findChild<QLineEdit *>(QStringLiteral("fileNameEdit"));
+            if (name) {
+                name->setText(QFileInfo(target).fileName());
+            }
+            QMetaObject::invokeMethod(dialog, "accept");
+        }
+    });
+    answerTimer.start(20);
+    const QUrl url(QStringLiteral("http://127.0.0.1:%1/test").arg(server.serverPort()));
+    QWebEnginePage defaultPage(browser.profileForUser(QStringLiteral("default")));
+    defaultPage.download(url);
+    QTRY_COMPARE_WITH_TIMEOUT(dialogs, 1, 10000);
+    QTRY_COMPARE_WITH_TIMEOUT(browser.downloads()->downloads().size(), 1, 10000);
+    auto item = browser.downloads()->downloads().first();
+    QVERIFY(item);
+    QTRY_COMPARE_WITH_TIMEOUT(item->state(), QWebEngineDownloadRequest::DownloadCompleted, 10000);
+    QCOMPARE(QDir(item->downloadDirectory()).filePath(item->downloadFileName()), target);
+    QFile file(target);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), QByteArray("cosmic-test!"));
+
+    const QString user = browser.userCatalog()->addUser(
+        QStringLiteral("Download test %1").arg(QUuid::createUuid().toString()),
+        QStringLiteral("#7c6cf0"));
+    QVERIFY(!user.isEmpty());
+    target = dir.filePath(QStringLiteral("second.txt"));
+    QWebEnginePage userPage(browser.profileForUser(user));
+    userPage.download(url);
+    QTRY_COMPARE_WITH_TIMEOUT(dialogs, 2, 10000);
+    QTRY_COMPARE_WITH_TIMEOUT(browser.downloads()->downloads().size(), 2, 10000);
+    item = browser.downloads()->downloads().first();
+    QVERIFY(item);
+    QTRY_COMPARE_WITH_TIMEOUT(item->state(), QWebEngineDownloadRequest::DownloadCompleted, 10000);
+    QVERIFY(QFileInfo::exists(target));
+
+    target = dir.filePath(QStringLiteral("slow.txt"));
+    defaultPage.download(QUrl(QStringLiteral("http://127.0.0.1:%1/slow")
+                                  .arg(server.serverPort())));
+    QTRY_COMPARE_WITH_TIMEOUT(dialogs, 3, 10000);
+    QTRY_COMPARE_WITH_TIMEOUT(browser.downloads()->downloads().size(), 3, 10000);
+    item = browser.downloads()->downloads().first();
+    QVERIFY(item);
+    QTRY_COMPARE_WITH_TIMEOUT(item->state(), QWebEngineDownloadRequest::DownloadInProgress, 10000);
+    auto *table = window->findChild<QTableWidget *>(QStringLiteral("downloadsTable"));
+    auto *cancel = window->findChild<QPushButton *>(QStringLiteral("cancelDownloadButton"));
+    QVERIFY(table && cancel);
+    QVERIFY(qobject_cast<QProgressBar *>(table->cellWidget(0, 2)));
+    table->selectRow(0);
+    QVERIFY(cancel->isEnabled());
+    cancel->click();
+    QTRY_COMPARE_WITH_TIMEOUT(item->state(), QWebEngineDownloadRequest::DownloadCancelled, 10000);
+
+    reject = true;
+    defaultPage.download(url);
+    QTRY_COMPARE_WITH_TIMEOUT(dialogs, 4, 10000);
+    QCOMPARE(browser.downloads()->downloads().size(), 3);
+    reject = false;
+    target = dir.filePath(QStringLiteral("interrupted.bin"));
+    bool sawInterruption = false;
+    connect(browser.downloads(), &DownloadManager::changed, &server, [&] {
+        const auto downloads = browser.downloads()->downloads();
+        if (!downloads.isEmpty() && downloads.first()
+            && downloads.first()->downloadFileName() == QStringLiteral("interrupted.bin")
+            && downloads.first()->state() == QWebEngineDownloadRequest::DownloadInterrupted) {
+            sawInterruption = true;
+            recoverConnection = true;
+        }
+    });
+    defaultPage.download(QUrl(QStringLiteral("http://127.0.0.1:%1/interrupted")
+                                  .arg(server.serverPort())));
+    QTRY_COMPARE_WITH_TIMEOUT(dialogs, 5, 10000);
+    QTRY_COMPARE_WITH_TIMEOUT(browser.downloads()->downloads().size(), 4, 10000);
+    item = browser.downloads()->downloads().first();
+    QVERIFY(item);
+    QTRY_VERIFY_WITH_TIMEOUT(sawInterruption, 10000);
+    table->selectRow(0);
+    auto *resume = window->findChild<QPushButton *>(QStringLiteral("resumeDownloadButton"));
+    QVERIFY(resume);
+    QVERIFY(resume->isEnabled());
+    QTRY_COMPARE_WITH_TIMEOUT(item->state(), QWebEngineDownloadRequest::DownloadCompleted, 7000);
+    QVERIFY(interruptedRequests >= 2);
+    QFile resumed(target);
+    QVERIFY(resumed.open(QIODevice::ReadOnly));
+    QCOMPARE(resumed.readAll(), payload);
+    answerTimer.stop();
+    browser.downloads()->clearFinished();
+    QVERIFY(browser.downloads()->downloads().isEmpty());
+    QVERIFY(browser.userCatalog()->removeUser(user));
+    deleteAllBrowserWindows();
+}
+
+void TestBrowserWindow::autofillRequiresConfirmation()
+{
+    deleteAllBrowserWindows();
+    Browser browser;
+    PasswordVault *vault = browser.passwordVault();
+    QVERIFY(vault);
+    QVERIFY(vault->initialize(QStringLiteral("a long test passphrase")));
+    VaultEntry entry;
+    entry.site = QStringLiteral("vault.example");
+    entry.username = QStringLiteral("alice");
+    entry.password = QStringLiteral("example-password");
+    QVERIFY(!vault->addEntry(entry).isEmpty());
+
+    BrowserWindow *window = makeWindow(browser);
+    QVERIFY(window);
+    window->present();
+    WebPage *page = window->currentTab()->webView()->webPage();
+    int prompts = 0;
+    QMessageBox::StandardButton answer = QMessageBox::No;
+    QTimer answerTimer;
+    connect(&answerTimer, &QTimer::timeout, [&] {
+        auto *dialog = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        if (dialog && dialog->windowTitle() == QStringLiteral("Password vault")) {
+            ++prompts;
+            dialog->button(answer)->click();
+        }
+    });
+    answerTimer.start(20);
+
+    const QString html = QStringLiteral("<input type='text'><input type='password'>");
+    auto load = [&](const QUrl &url) {
+        QSignalSpy spy(page, &QWebEnginePage::loadFinished);
+        page->setHtml(html, url);
+        return spy.wait(10000) && spy.last().first().toBool();
+    };
+    auto passwordValue = [&] {
+        auto value = QSharedPointer<QString>::create();
+        auto done = QSharedPointer<bool>::create(false);
+        page->runJavaScript(QStringLiteral("document.querySelector('input[type=password]').value"),
+                            [value, done](const QVariant &result) {
+            *value = result.toString();
+            *done = true;
+        });
+        if (!QTest::qWaitFor([done] { return *done; }, 5000)) {
+            return QString();
+        }
+        return *value;
+    };
+
+    QVERIFY(load(QUrl(QStringLiteral("https://vault.example/login"))));
+    QTRY_COMPARE_WITH_TIMEOUT(prompts, 1, 5000);
+    QCOMPARE(passwordValue(), QString());
+
+    answer = QMessageBox::Yes;
+    QVERIFY(load(QUrl(QStringLiteral("https://vault.example/again"))));
+    QTRY_COMPARE_WITH_TIMEOUT(prompts, 2, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(passwordValue(), QStringLiteral("example-password"), 5000);
+
+    QVERIFY(load(QUrl(QStringLiteral("https://sub.vault.example/login"))));
+    QTest::qWait(1200);
+    QCOMPARE(prompts, 2);
+    QCOMPARE(passwordValue(), QString());
+
+    QVERIFY(load(QUrl(QStringLiteral("http://vault.example/login"))));
+    QTest::qWait(1200);
+    QCOMPARE(prompts, 2);
+    QCOMPARE(passwordValue(), QString());
+    answerTimer.stop();
+    deleteAllBrowserWindows();
+}
 
 void TestBrowserWindow::freshTabShowsNewTabPage()
 {

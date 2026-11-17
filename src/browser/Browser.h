@@ -14,7 +14,9 @@ class Settings;
 class UserCatalog;
 class BlocklistInterceptor;
 class Bookmarks;
+class Notes;
 class PasswordVault;
+class DownloadManager;
 class QWebEngineProfile;
 
 /// Application-level orchestration: creates windows through an injected
@@ -44,10 +46,12 @@ public:
 
     /// Never null; loaded from XDG config (default: empty list).
     Bookmarks *bookmarks() const { return m_bookmarks.get(); }
+    Notes *notes() const { return m_notes.get(); }
 
     /// Never null; encrypted vault file in the XDG config dir
     /// (created on first use from Settings → Passwords).
     PasswordVault *passwordVault() const { return m_vault.get(); }
+    DownloadManager *downloads() const { return m_downloads.get(); }
 
     /// Attached to every web profile; never null.
     BlocklistInterceptor *requestInterceptor() const { return m_interceptor; }
@@ -98,7 +102,9 @@ private:
     std::unique_ptr<Settings> m_settings;
     std::unique_ptr<UserCatalog> m_users;
     std::unique_ptr<Bookmarks> m_bookmarks;
+    std::unique_ptr<Notes> m_notes;
     std::unique_ptr<PasswordVault> m_vault;
+    std::unique_ptr<DownloadManager> m_downloads;
     BlocklistInterceptor *m_interceptor = nullptr; // owned by the default profile
     QHash<QString, QWebEngineProfile *> m_profiles; // user id → profile
     PagePolicy m_pagePolicy;

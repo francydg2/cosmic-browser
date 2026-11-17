@@ -5,6 +5,7 @@
 #include "web/WebPageDelegate.h"
 
 #include <QMainWindow>
+#include <QPointer>
 #include <QStringList>
 #include <QVector>
 #include <vector>
@@ -14,6 +15,9 @@ class ActionRegistry;
 class UrlBar;
 class TabContent;
 class SettingsForm;
+class DownloadsDialog;
+class NotesDialog;
+class TrackerRadarDialog;
 class QTabWidget;
 class QProgressBar;
 class QAction;
@@ -100,6 +104,9 @@ private:
     void toggleBookmarkForCurrentPage();
     void showSiteInfo();
     void openSettingsTab(const QString &section = QString());
+    void showDownloads();
+    void showNotes();
+    void showTrackerRadar();
     void confirmClearBrowsingData();
     void handleFeaturePermissionAsk(WebPage *page, const QUrl &origin,
                                     QWebEnginePage::Feature feature);
@@ -148,6 +155,9 @@ private:
     QAction *m_reloadAction = nullptr;
     QToolButton *m_userButton = nullptr;
     QMenu *m_userMenu = nullptr;
+    QPointer<DownloadsDialog> m_downloadsDialog;
+    QPointer<NotesDialog> m_notesDialog;
+    QPointer<TrackerRadarDialog> m_trackerRadarDialog;
 
     QString m_userId; // owning user of this window's tabs
     QList<SessionGroup> m_groups;

@@ -49,6 +49,27 @@ Why a factory? So testability and layering survive: `Browser` can be
 unit-tested with a stub `AppWindow`, and `ui/` stays invisible to
 `browser/`.
 
+## Downloads
+
+Each WebEngine profile forwards download requests to the browser's
+`DownloadManager`. The user chooses a destination before a transfer is
+accepted. The toolbar button and Ctrl+J open a session-only list showing
+progress, failures and cancellation, with explicit actions to open a
+completed file or its folder. Download history is not persisted.
+The downloads window shows transfer progress and offers resume when WebEngine
+reports an interrupted download as resumable. It also makes up to two
+automatic resume attempts. Recovery depends on WebEngine and the server;
+some interrupted downloads cannot be resumed and must be started again.
+
+## Quick Notes
+
+`core/Notes` atomically persists local notes in `notes.json` under the
+application data directory. They are not encrypted or profile-isolated.
+The Quick Notes window supports search, categories, automatic saving and
+explicitly creating a note from the current page or selected text. Page URLs
+may include query parameters. If the file cannot be read or is invalid, it is
+left untouched; save failures are displayed rather than silently discarded.
+
 ## Tabs
 
 `BrowserWindow` owns a `QTabWidget` of `TabContent` widgets. Each
@@ -148,6 +169,19 @@ the user list and the vault operate on the live stores.
 The interceptor enabled-flag follows `requestBlockingChanged` via
 signal connection — `ui/` never reaches into `web/` internals directly.
 
+The password vault uses AES-256-GCM and PBKDF2-HMAC-SHA256. New master
+passwords require at least 16 Unicode characters and four distinct
+non-space characters; existing vaults remain unlockable with their original
+passwords. Filling is limited to HTTPS and an exact host match, and requires
+confirmation for each page load. Some temporary buffers are wiped, but Qt
+strings and browser processes can retain other copies; this is not a
+guarantee that secrets are erased from memory.
+
+Argon2id is a candidate for a future, versioned vault format with explicit
+parameters and migration support. Changing the KDF in place would make
+existing vaults unreadable; PBKDF2 remains in use until that migration is
+implemented and tested.
+
 ## Request blocking
 
 `web/BlocklistInterceptor` implements `QWebEngineUrlRequestInterceptor`
@@ -164,6 +198,13 @@ content or apply cosmetic rules, and Chromium extensions are not
 exposed. Verified live on the real desktop: a local page referencing
 `doubleclick.net` renders its text while the tracker request is
 dropped (log: `blocked request to doubleclick.net`).
+
+Tracker Radar reports requests actually blocked by the shared interceptor,
+across all profiles, for the current browser session. Its total counts matched
+list rules rather than all trackers on a page; it retains at most 500 recent
+events in memory. Only hostnames and timestamps are retained, not full URLs.
+Categories are taken from the bundled list's headings; custom rules are
+unclassified, and the source site may be unavailable.
 
 ## Session restore
 

@@ -48,6 +48,7 @@ set(COSMIC_RESOURCE_FILES
     resources/icons/close.svg
     resources/icons/close-active.svg
     resources/icons/arrow-down.svg
+    resources/icons/download.svg
     resources/icons/check.svg
     resources/icons/ai.svg
     resources/icons/star.svg
@@ -85,6 +86,8 @@ add_library(cosmic_core STATIC
     src/core/UserCatalog.cpp
     src/core/Bookmarks.h
     src/core/Bookmarks.cpp
+    src/core/Notes.h
+    src/core/Notes.cpp
     src/core/PasswordVault.h
     src/core/PasswordVault.cpp
     src/core/UILayout.h
@@ -100,6 +103,8 @@ add_library(cosmic_core STATIC
     src/web/BlocklistInterceptor.h
     src/web/BlocklistInterceptor.cpp
     src/browser/AppWindow.h
+    src/browser/DownloadManager.h
+    src/browser/DownloadManager.cpp
     src/browser/Browser.h
     src/browser/Browser.cpp
     src/browser/SingleInstance.h
@@ -130,6 +135,12 @@ add_library(cosmic_core STATIC
     src/ui/customizer/CustomizerWindow.cpp
     src/ui/NameColorDialog.h
     src/ui/NameColorDialog.cpp
+    src/ui/DownloadsDialog.h
+    src/ui/DownloadsDialog.cpp
+    src/ui/NotesDialog.h
+    src/ui/NotesDialog.cpp
+    src/ui/TrackerRadarDialog.h
+    src/ui/TrackerRadarDialog.cpp
     src/ui/BrowserWindow.h
     src/ui/BrowserWindow.cpp
 )
