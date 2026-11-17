@@ -118,7 +118,14 @@ qt_add_resources(cosmic_test_window "nebula_res_test"
     BASE ${CMAKE_SOURCE_DIR}/resources
     FILES ${NEBULA_TEST_RES_FILES}
 )
-add_test(NAME browser_window COMMAND cosmic_test_window)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test(NAME browser_window COMMAND ${CMAKE_COMMAND}
+        "-DTEST_EXECUTABLE=$<TARGET_FILE:cosmic_test_window>"
+        "-DTEST_LOG=${CMAKE_CURRENT_BINARY_DIR}/browser_window.log"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/run_browser_window.cmake")
+else()
+    add_test(NAME browser_window COMMAND cosmic_test_window)
+endif()
 set_tests_properties(browser_window PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     TIMEOUT 180
