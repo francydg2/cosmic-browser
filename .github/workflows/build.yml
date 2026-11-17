@@ -193,6 +193,7 @@ jobs:
             dist/share/applications/cosmic.desktop > build/appimage/cosmic.desktop
           "$RUNNER_TEMP/appimage-tools/linuxdeploy-x86_64.AppImage" \
             --appdir AppDir \
+            "${exclude_library_args[@]}" \
             --executable dist/bin/cosmic \
             --desktop-file build/appimage/cosmic.desktop \
             --icon-file dist/share/icons/hicolor/512x512/apps/cosmic.png \
@@ -200,7 +201,9 @@ jobs:
           # Use one coherent NSS/NSPR stack from the host instead of bundling
           # only part of Ubuntu's stack and mixing it with distro modules.
           nss_libraries=(nss3 nssutil3 smime3 ssl3 softokn3 freebl3 freeblpriv3 nssckbi nssdbm3 nspr4 plc4 plds4)
+          exclude_library_args=()
           for library in "${nss_libraries[@]}"; do
+            exclude_library_args+=(--exclude-library "lib${library}.so*")
             find AppDir \( -type f -o -type l \) -name "lib${library}.so*" -delete
             if find AppDir \( -type f -o -type l \) -name "lib${library}.so*" -print -quit | grep -q .; then
               echo "Failed to exclude lib${library}.so from AppImage" >&2
@@ -218,6 +221,7 @@ jobs:
           chmod +x AppDir/AppRun
           "$RUNNER_TEMP/appimage-tools/linuxdeploy-x86_64.AppImage" \
             --appdir AppDir \
+            "${exclude_library_args[@]}" \
             --output appimage
           for library in "${nss_libraries[@]}"; do
             if find AppDir \( -type f -o -type l \) -name "lib${library}.so*" -print -quit | grep -q .; then
