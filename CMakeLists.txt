@@ -73,6 +73,7 @@ set(COSMIC_RESOURCE_FILES
     resources/icons/wrench.svg
     resources/icons/pencil.svg
     resources/blocklists/default.txt
+    resources/update-macos.sh
     resources/licenses/qrcodegen.txt
 )
 
@@ -118,6 +119,10 @@ add_library(cosmic_core STATIC
     src/browser/AppWindow.h
     src/browser/DownloadManager.h
     src/browser/DownloadManager.cpp
+    src/browser/UpdateAsset.h
+    src/browser/UpdateAsset.cpp
+    src/browser/UpdateDownload.h
+    src/browser/UpdateDownload.cpp
     src/browser/Browser.h
     src/browser/Browser.cpp
     src/browser/SingleInstance.h

@@ -3,6 +3,7 @@ package app.cosmic.browser.mobile
 import android.Manifest
 import android.app.DownloadManager
 import android.content.Context
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -10,6 +11,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.provider.Settings
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
 import android.webkit.CookieManager
@@ -27,6 +29,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
@@ -41,6 +44,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -112,7 +121,7 @@ private data class DownloadInfo(
     val mimeType: String?
 )
 
-private enum class BrowserScreen { BROWSER, TABS, BOOKMARKS, HISTORY, SETTINGS, READER }
+private enum class BrowserScreen { BROWSER, TABS, BOOKMARKS, HISTORY, DOWNLOADS, SETTINGS, READER }
 
 private enum class SettingsCategory(val title: String, val description: String) {
     GENERAL("Generali", "Avvio e sessione"),
@@ -157,7 +166,24 @@ private class BrowserTab(val id: Long, initialUrl: String = "") {
 class CosmicComposeActivity : ComponentActivity() {
     private var pendingDownload: DownloadInfo? = null
     private var browser: BrowserController? = null
+    private var updates: AndroidUpdates? = null
+    private val downloadCenter by lazy { DownloadCenter(applicationContext) }
     private var pendingWidgetSearch = false
+    private val installPermission = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        if (packageManager.canRequestPackageInstalls()) {
+            if (updates?.readyFile != null) {
+                startUpdateInstall()
+            } else {
+                updates?.reportInstallError("L'app è stata riavviata. Controlla e scarica di nuovo l'aggiornamento.")
+                Toast.makeText(this, "Controlla e scarica di nuovo l'aggiornamento", Toast.LENGTH_LONG).show()
+            }
+        } else {
+            updates?.reportInstallError("Autorizzazione all'installazione non concessa.")
+            Toast.makeText(this, "Autorizzazione all'installazione non concessa", Toast.LENGTH_LONG).show()
+        }
+    }
 
     private val storagePermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -176,6 +202,7 @@ class CosmicComposeActivity : ComponentActivity() {
         window.statusBarColor = android.graphics.Color.rgb(17, 19, 25)
         window.navigationBarColor = android.graphics.Color.rgb(17, 19, 25)
         browser = BrowserController(this, ::requestDownload)
+        updates = AndroidUpdates(applicationContext)
         setContent {
             MaterialTheme(
                 colorScheme = darkColorScheme(
@@ -192,11 +219,16 @@ class CosmicComposeActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = CosmicBackground
                 ) {
-                    browser?.let { BrowserApp(it, onExit = ::finish) }
+                    browser?.let { controller ->
+                        updates?.let { updateManager ->
+                            BrowserApp(controller, updateManager, downloadCenter, ::requestUpdateInstall, onExit = ::finish)
+                        }
+                    }
                 }
             }
         }
         handleWidgetIntent(intent)
+        updates?.check(manual = false)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -240,9 +272,55 @@ class CosmicComposeActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        updates?.close()
+        updates = null
         browser?.dispose()
         browser = null
         super.onDestroy()
+    }
+
+    private fun requestUpdateInstall() {
+        if (updates?.readyFile == null) return
+        if (packageManager.canRequestPackageInstalls()) {
+            startUpdateInstall()
+        } else {
+            try {
+                installPermission.launch(
+                    Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))
+                )
+            } catch (_: ActivityNotFoundException) {
+                updates?.reportInstallError("Impostazioni di installazione non disponibili sul dispositivo.")
+                Toast.makeText(this, "Impostazioni di installazione non disponibili", Toast.LENGTH_LONG).show()
+            } catch (_: SecurityException) {
+                updates?.reportInstallError("Android ha bloccato l'accesso alle impostazioni di installazione.")
+                Toast.makeText(this, "Impostazioni di installazione bloccate", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun startUpdateInstall() {
+        val file = updates?.readyFile ?: return
+        if (!file.isFile) {
+            updates?.reportInstallError("Il pacchetto non è più disponibile. Scaricalo di nuovo.")
+            return
+        }
+        try {
+            val uri = FileProvider.getUriForFile(this, "$packageName.updates", file)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(intent)
+        } catch (_: ActivityNotFoundException) {
+            updates?.reportInstallError("Nessuna app disponibile per installare l'aggiornamento.")
+            Toast.makeText(this, "Nessuna app disponibile per installare l'aggiornamento", Toast.LENGTH_LONG).show()
+        } catch (_: SecurityException) {
+            updates?.reportInstallError("Android ha bloccato l'installazione dell'aggiornamento.")
+            Toast.makeText(this, "Android ha bloccato l'installazione", Toast.LENGTH_LONG).show()
+        } catch (_: IllegalArgumentException) {
+            updates?.reportInstallError("Impossibile condividere l'APK con l'installatore Android.")
+            Toast.makeText(this, "Impossibile aprire l'APK", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun requestDownload(info: DownloadInfo) {
@@ -258,31 +336,7 @@ class CosmicComposeActivity : ComponentActivity() {
     }
 
     private fun enqueueDownload(info: DownloadInfo) {
-        val uri = Uri.parse(info.url)
-        if (uri.scheme != "http" && uri.scheme != "https") {
-            Toast.makeText(this, "Indirizzo di download non supportato", Toast.LENGTH_SHORT).show()
-            return
-        }
-        try {
-            val request = DownloadManager.Request(uri)
-                .setTitle(URLUtil.guessFileName(info.url, info.contentDisposition, info.mimeType))
-                .setDescription("Download avviato da Cosmic")
-                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                .setDestinationInExternalPublicDir(
-                    Environment.DIRECTORY_DOWNLOADS,
-                    safeDownloadName(URLUtil.guessFileName(info.url, info.contentDisposition, info.mimeType))
-                )
-            if (!info.mimeType.isNullOrBlank()) request.setMimeType(info.mimeType)
-            if (!info.userAgent.isNullOrBlank()) request.addRequestHeader("User-Agent", info.userAgent)
-            CookieManager.getInstance().getCookie(info.url)?.let {
-                request.addRequestHeader("Cookie", it)
-            }
-            val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-            manager.enqueue(request)
-            Toast.makeText(this, "Download avviato · cartella Download", Toast.LENGTH_SHORT).show()
-        } catch (_: Exception) {
-            Toast.makeText(this, "Impossibile avviare il download", Toast.LENGTH_LONG).show()
-        }
+        downloadCenter.start(info.url, info.userAgent, info.contentDisposition, info.mimeType)
     }
 
     private fun safeDownloadName(name: String): String =
@@ -807,7 +861,13 @@ private class BrowserController(
 }
 
 @Composable
-private fun BrowserApp(controller: BrowserController, onExit: () -> Unit) {
+private fun BrowserApp(
+    controller: BrowserController,
+    updates: AndroidUpdates,
+    downloads: DownloadCenter,
+    onInstallUpdate: () -> Unit,
+    onExit: () -> Unit
+) {
     val activeTab = controller.activeTab
     BackHandler {
         controller.handleBack(onExit)
@@ -830,11 +890,13 @@ private fun BrowserApp(controller: BrowserController, onExit: () -> Unit) {
             BrowserScreen.TABS -> TabsScreen(controller, Modifier.weight(1f))
             BrowserScreen.BOOKMARKS -> BookmarksScreen(controller, Modifier.weight(1f))
             BrowserScreen.HISTORY -> HistoryScreen(controller, Modifier.weight(1f))
-            BrowserScreen.SETTINGS -> SettingsScreen(controller, Modifier.weight(1f))
+            BrowserScreen.DOWNLOADS -> DownloadsScreen(downloads, Modifier.weight(1f))
+            BrowserScreen.SETTINGS -> SettingsScreen(controller, updates, onInstallUpdate, Modifier.weight(1f))
             BrowserScreen.READER -> ReaderScreen(controller, Modifier.weight(1f))
         }
         NavigationBar(controller)
     }
+    DownloadBanner(downloads)
 
     if (controller.showClearDialog) {
         AlertDialog(
@@ -850,6 +912,34 @@ private fun BrowserApp(controller: BrowserController, onExit: () -> Unit) {
             containerColor = CosmicSurface,
             titleContentColor = CosmicText,
             textContentColor = CosmicMuted
+        )
+    }
+    if (updates.showOffer && updates.candidate != null) {
+        AlertDialog(
+            onDismissRequest = { updates.showOffer = false },
+            title = { Text("Aggiornamento disponibile") },
+            text = { Text("È disponibile Cosmic ${updates.candidate?.versionName}. Scaricare l'APK da GitHub?") },
+            confirmButton = {
+                TextButton(onClick = updates::download) { Text("Scarica") }
+            },
+            dismissButton = {
+                TextButton(onClick = { updates.showOffer = false }) { Text("Più tardi") }
+            },
+            containerColor = CosmicSurface
+        )
+    }
+    if (updates.showReady && updates.readyFile != null) {
+        AlertDialog(
+            onDismissRequest = { updates.showReady = false },
+            title = { Text("Aggiornamento verificato") },
+            text = { Text("L'APK è pronto. Android potrebbe chiedere di autorizzare Cosmic a installare app e richiederà la tua conferma.") },
+            confirmButton = {
+                TextButton(onClick = { updates.showReady = false; onInstallUpdate() }) { Text("Installa") }
+            },
+            dismissButton = {
+                TextButton(onClick = { updates.showReady = false }) { Text("Più tardi") }
+            },
+            containerColor = CosmicSurface
         )
     }
     controller.translationUrl?.let { url ->
@@ -910,8 +1000,9 @@ private fun Header(controller: BrowserController) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(56.dp)
             .background(CosmicBackground)
+            .padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 8.dp)
+            .heightIn(min = 56.dp)
             .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -945,6 +1036,10 @@ private fun Header(controller: BrowserController) {
                     DropdownMenuItem(
                         text = { Text("Cronologia") },
                         onClick = { menuExpanded = false; controller.screen = BrowserScreen.HISTORY }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Download") },
+                        onClick = { menuExpanded = false; controller.screen = BrowserScreen.DOWNLOADS }
                     )
                     DropdownMenuItem(
                         text = { Text("Ricarica pagina") },
@@ -981,6 +1076,7 @@ private fun Header(controller: BrowserController) {
                     BrowserScreen.TABS -> "${controller.tabs.size} schede"
                     BrowserScreen.BOOKMARKS -> "Preferiti"
                     BrowserScreen.HISTORY -> "Cronologia"
+                    BrowserScreen.DOWNLOADS -> "Download"
                     BrowserScreen.SETTINGS -> controller.settingsCategory?.title ?: "Impostazioni"
                     BrowserScreen.READER -> "Modalità lettura"
                     BrowserScreen.BROWSER -> "COSMIC"
@@ -1231,7 +1327,12 @@ private fun HistoryScreen(controller: BrowserController, modifier: Modifier) {
 }
 
 @Composable
-private fun SettingsScreen(controller: BrowserController, modifier: Modifier) {
+private fun SettingsScreen(
+    controller: BrowserController,
+    updates: AndroidUpdates,
+    onInstallUpdate: () -> Unit,
+    modifier: Modifier
+) {
     val category = controller.settingsCategory
     LazyColumn(
         modifier = modifier,
@@ -1315,7 +1416,20 @@ private fun SettingsScreen(controller: BrowserController, modifier: Modifier) {
                 }
             }
             SettingsCategory.UPDATES -> item {
-                SettingsNotice("Cosmic Android ${controller.versionName}. La verifica e l'installazione automatica degli aggiornamenti non sono ancora disponibili.")
+                Column {
+                    SettingsNotice("Cosmic Android ${controller.versionName}. Cosmic controlla GitHub all'apertura; l'installazione richiede la conferma di Android.")
+                    Text(updates.status, color = CosmicText, modifier = Modifier.padding(vertical = 12.dp))
+                    if (updates.busy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    Button(onClick = { updates.check(manual = true) }, enabled = !updates.busy) {
+                        Text("Controlla aggiornamenti")
+                    }
+                    if (updates.candidate != null && updates.readyFile == null) {
+                        Button(onClick = updates::download, enabled = !updates.busy) { Text("Scarica aggiornamento") }
+                    }
+                    if (updates.readyFile != null) {
+                        Button(onClick = onInstallUpdate, enabled = !updates.busy) { Text("Installa aggiornamento") }
+                    }
+                }
             }
         }
     }
@@ -1418,5 +1532,65 @@ private fun PageRow(
 private fun EmptyMessage(message: String) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(message, color = CosmicMuted)
+    }
+}
+
+@Composable
+private fun DownloadsScreen(center: DownloadCenter, modifier: Modifier) {
+    val context = LocalContext.current
+    if (center.items.isEmpty()) {
+        Box(modifier) { EmptyMessage("Nessun download.") }
+        return
+    }
+    LazyColumn(
+        modifier = modifier,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(center.items.toList(), key = { it.id }) { item ->
+            val state = when (item.state) {
+                DownloadState.DONE -> "Completato · Download"
+                DownloadState.FAILED -> "Non riuscito: ${item.error}"
+                DownloadState.RUNNING ->
+                    if (item.total > 0) "In corso · ${item.done * 100 / item.total}%" else "In corso"
+            }
+            PageRow(
+                item.name, state,
+                onOpen = {
+                    val uri = item.uri
+                    if (item.state == DownloadState.DONE && uri != null) {
+                        try {
+                            context.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, item.mime ?: "*/*")
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            })
+                        } catch (_: Exception) {
+                            Toast.makeText(context, "Impossibile aprire il file", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                },
+                onRemove = { center.remove(item) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun DownloadBanner(center: DownloadCenter) {
+    val message = center.banner ?: return
+    LaunchedEffect(message) {
+        delay(3500)
+        if (center.banner == message) center.banner = null
+    }
+    Box(
+        Modifier.fillMaxWidth()
+            .padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 8.dp)
+            .padding(horizontal = 16.dp),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Card(colors = CardDefaults.cardColors(containerColor = CosmicAccent)) {
+            Text(message, color = Color.White, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                fontWeight = FontWeight.SemiBold, maxLines = 2)
+        }
     }
 }

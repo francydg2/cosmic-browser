@@ -7,6 +7,8 @@
 #include <QVector>
 #include <QWidget>
 
+#include "browser/UpdateAsset.h"
+
 class BlocklistInterceptor;
 class Browser;
 class UserCatalog;
@@ -23,6 +25,7 @@ class QNetworkReply;
 class QPushButton;
 class QTabWidget;
 class QToolButton;
+class UpdateDownload;
 
 /// Settings page content (Chrome-style: hosted in a tab, not a dialog):
 /// General (session restore), Search engine, Appearance
@@ -39,6 +42,7 @@ public:
     explicit SettingsForm(Settings *settings, BlocklistInterceptor *interceptor,
                           UserCatalog *catalog, PasswordVault *vault = nullptr,
                           Browser *browser = nullptr, QWidget *parent = nullptr);
+    ~SettingsForm() override;
 
     void load();
     void apply();
@@ -53,6 +57,8 @@ private:
     void syncCustomTemplateState();
     void checkForUpdates();
     void finishUpdateCheck(QNetworkReply *reply);
+    void startUpdate();
+    void finishUpdate(const QString &path);
     void refreshUserWidgets();
     void addUser();
     void renameUser();
@@ -86,7 +92,9 @@ private:
     QPushButton *m_downloadUpdateButton = nullptr;
     QLabel *m_updateStatusLabel = nullptr;
     QLabel *m_updateVersionLabel = nullptr;
-    QUrl m_updateReleaseUrl;
+    UpdateAsset m_updateAsset;
+    UpdateDownload *m_updateDownload = nullptr;
+    QString m_updateTemporaryPath;
 
     QComboBox *m_engineCombo = nullptr;
     QLineEdit *m_customEdit = nullptr;

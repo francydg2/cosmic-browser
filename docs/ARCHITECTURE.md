@@ -61,6 +61,22 @@ reports an interrupted download as resumable. It also makes up to two
 automatic resume attempts. Recovery depends on WebEngine and the server;
 some interrupted downloads cannot be resumed and must be started again.
 
+## Updates
+
+The update check selects the matching release asset from the official GitHub
+repository and requires its size and SHA-256 digest. The transfer is staged
+with `QSaveFile` and committed only after both checks pass. The digest checks
+integrity against GitHub metadata; it is not a publisher signature.
+
+On Linux, only the running x64 AppImage is replaced, at its existing path.
+Windows runs the downloaded setup with the current installation directory.
+On Apple Silicon, the updater stages the app beside the existing bundle,
+waits for Cosmic to close, and retains the old bundle in a hidden backup
+directory. Unwritable locations and other package types require manual
+updates. User profiles are not replaced. Updates are offered only when the
+release version is newer; replacing files under an existing version tag does
+not trigger an update.
+
 ## Quick Notes
 
 `core/Notes` atomically persists local notes in `notes.json` under the

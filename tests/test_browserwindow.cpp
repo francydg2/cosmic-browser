@@ -58,6 +58,7 @@
 #include "core/UserCatalog.h"
 #include "core/LayoutEditor.h"
 #include "core/PasswordVault.h"
+#include "core/Paths.h"
 #include "core/Settings.h"
 #include "ui/BrowserWindow.h"
 #include "ui/NameColorDialog.h"
@@ -143,6 +144,8 @@ private slots:
     void httpsNavigationThroughGui();
     void webFullScreen();
     void searchOpenTabs();
+    void savedWorkspaces();
+    void savedWorkspacesCorruptFile();
     void readerShowsTextOnly();
     void translatePageWithConsent();
     void pageQrCode();
@@ -361,6 +364,165 @@ void TestBrowserWindow::searchOpenTabs()
     QCOMPARE(results->count(), 1);
     QTest::keyClick(search, Qt::Key_Return);
     QCOMPARE(window->activeWebPage(), first);
+    deleteAllBrowserWindows();
+}
+
+void TestBrowserWindow::savedWorkspaces()
+{
+    deleteAllBrowserWindows();
+    Browser browser;
+    BrowserWindow *window = makeWindow(browser);
+    QVERIFY(window);
+    window->present();
+    const QString filePath = Paths::configDir() + QStringLiteral("/workspaces/")
+        + QString::fromLatin1(window->userId().toUtf8().toHex()) + QStringLiteral(".json");
+    const bool existed = QFileInfo::exists(filePath);
+    QByteArray original;
+    if (existed) {
+        QFile file(filePath);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        original = file.readAll();
+    }
+    const auto restoreFile = qScopeGuard([&] {
+        if (existed) {
+            QFile file(filePath);
+            if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                file.write(original);
+            }
+        } else {
+            QFile::remove(filePath);
+        }
+    });
+
+    window->createPageForWindowType(QWebEnginePage::WebBrowserTab);
+    window->setTabPinned(0, true);
+    const QString group = window->createGroup(QStringLiteral("Study"), QStringLiteral("#06d6a0"));
+    QVERIFY(window->assignTabToGroup(1, group));
+    window->setGroupCollapsed(group, true);
+    TabContent *originalTab = window->tabAt(0);
+    QAction *action = findAction(window, QStringLiteral("workspaces.open"));
+    QVERIFY(action);
+    const QString name = QStringLiteral("test-") + QUuid::createUuid().toString();
+    bool saved = false;
+    QTimer::singleShot(0, window, [&] {
+        auto *dialog = window->findChild<QDialog *>(QStringLiteral("workspacesDialog"));
+        if (!dialog) return;
+        auto *save = dialog->findChild<QPushButton *>(QStringLiteral("workspaceSave"));
+        if (!save) { dialog->reject(); return; }
+        QTimer::singleShot(0, dialog, [&] {
+            if (auto *input = qobject_cast<QInputDialog *>(QApplication::activeModalWidget())) {
+                input->setTextValue(name);
+                input->accept();
+            }
+        });
+        save->click();
+        auto *list = dialog->findChild<QListWidget *>(QStringLiteral("workspacesList"));
+        saved = list && !list->findItems(name, Qt::MatchExactly).isEmpty();
+        dialog->reject();
+    });
+    action->trigger();
+    QVERIFY(saved);
+
+    QString current;
+    QMap<QString, QList<SessionWindow>> stored;
+    QVERIFY(Session::loadUsers(filePath, &current, &stored));
+    QCOMPARE(current, window->userId());
+    QCOMPARE(stored.value(name).size(), 1);
+    QCOMPARE(stored.value(name).first().tabs.size(), 2);
+
+    QAction *settings = findAction(window, QStringLiteral("settings.open"));
+    QVERIFY(settings);
+    settings->trigger();
+    QCOMPARE(window->tabCount(), 3);
+    auto *menu = window->findChild<QMenu *>(QStringLiteral("workspacesMenu"));
+    QVERIFY(menu);
+    QVERIFY(QMetaObject::invokeMethod(menu, "aboutToShow", Qt::DirectConnection));
+    QAction *workspaceAction = nullptr;
+    for (QAction *entry : menu->actions()) {
+        if (entry->text() == name) workspaceAction = entry;
+    }
+    QVERIFY(workspaceAction);
+    workspaceAction->trigger();
+    QCOMPARE(window->tabCount(), 5);
+    QVERIFY(window->tabWidget()->indexOf(originalTab) >= 0);
+    QCOMPARE(window->groups().size(), 2);
+    const SessionGroup restored = window->groups().last();
+    QVERIFY(restored.id != group);
+    QCOMPARE(restored.name, QStringLiteral("Study"));
+    QCOMPARE(restored.color, QStringLiteral("#06d6a0"));
+    QVERIFY(restored.collapsed);
+    QCOMPARE(window->groupTabCount(restored.id), 1);
+
+    window->setUserId(QStringLiteral("another-test-profile"));
+    bool isolated = false;
+    QTimer::singleShot(0, window, [&] {
+        auto *dialog = window->findChild<QDialog *>(QStringLiteral("workspacesDialog"));
+        if (!dialog) return;
+        auto *list = dialog->findChild<QListWidget *>(QStringLiteral("workspacesList"));
+        isolated = list && list->findItems(name, Qt::MatchExactly).isEmpty();
+        dialog->reject();
+    });
+    action->trigger();
+    QVERIFY(isolated);
+    window->setUserId(QStringLiteral("default"));
+
+    bool deleted = false;
+    QTimer::singleShot(0, window, [&] {
+        auto *dialog = window->findChild<QDialog *>(QStringLiteral("workspacesDialog"));
+        if (!dialog) return;
+        auto *list = dialog->findChild<QListWidget *>(QStringLiteral("workspacesList"));
+        auto *remove = dialog->findChild<QPushButton *>(QStringLiteral("workspaceDelete"));
+        if (!list || !remove) { dialog->reject(); return; }
+        const auto entries = list->findItems(name, Qt::MatchExactly);
+        if (entries.isEmpty()) { dialog->reject(); return; }
+        list->setCurrentItem(entries.first());
+        QTimer::singleShot(0, dialog, [] {
+            if (auto *message = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+                message->button(QMessageBox::Yes)->click();
+            }
+        });
+        remove->click();
+        deleted = list->findItems(name, Qt::MatchExactly).isEmpty();
+        dialog->reject();
+    });
+    action->trigger();
+    QVERIFY(deleted);
+    QCOMPARE(window->tabCount(), 5);
+    QVERIFY(Session::loadUsers(filePath, &current, &stored));
+    QVERIFY(!stored.contains(name));
+    deleteAllBrowserWindows();
+}
+
+void TestBrowserWindow::savedWorkspacesCorruptFile()
+{
+    deleteAllBrowserWindows();
+    Browser browser;
+    BrowserWindow *window = makeWindow(browser);
+    QVERIFY(window);
+    window->setUserId(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    const QString directory = Paths::configDir() + QStringLiteral("/workspaces");
+    QVERIFY(QDir().mkpath(directory));
+    const QString filePath = directory + QLatin1Char('/')
+        + QString::fromLatin1(window->userId().toUtf8().toHex()) + QStringLiteral(".json");
+    const auto cleanup = qScopeGuard([&] { QFile::remove(filePath); });
+    QFile file(filePath);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    const QByteArray corrupt("{broken");
+    QCOMPARE(file.write(corrupt), corrupt.size());
+    file.close();
+    QAction *action = findAction(window, QStringLiteral("workspaces.open"));
+    QVERIFY(action);
+    bool warned = false;
+    QTimer::singleShot(0, window, [&] {
+        if (auto *message = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+            warned = true;
+            message->accept();
+        }
+    });
+    action->trigger();
+    QVERIFY(warned);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), corrupt);
     deleteAllBrowserWindows();
 }
 

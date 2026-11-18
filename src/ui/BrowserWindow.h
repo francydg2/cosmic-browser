@@ -114,6 +114,8 @@ private:
     void showNotes();
     void showTrackerRadar();
     void showTabSearch();
+    void showWorkspaces();
+    void openWorkspace(const SessionWindow &state);
     void showReader();
     void translateCurrentPage();
     void showPageQrCode();

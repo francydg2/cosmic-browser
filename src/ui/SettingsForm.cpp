@@ -1,6 +1,7 @@
 #include "ui/SettingsForm.h"
 
 #include "browser/Browser.h"
+#include "browser/UpdateDownload.h"
 #include "core/UserCatalog.h"
 #include "core/Logging.h"
 #include "core/PasswordVault.h"
@@ -16,6 +17,9 @@
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDesktopServices>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -29,8 +33,11 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QPushButton>
+#include <QProcess>
 #include <QSignalBlocker>
+#include <QSysInfo>
 #include <QTabWidget>
+#include <QTemporaryFile>
 #include <QTimer>
 #include <QToolButton>
 #include <QUrl>
@@ -107,6 +114,7 @@ SettingsForm::SettingsForm(Settings *settings, BlocklistInterceptor *interceptor
     , m_vault(vault)
     , m_browser(browser)
     , m_updateManager(new QNetworkAccessManager(this))
+    , m_updateDownload(new UpdateDownload(this))
 {
     setObjectName(QStringLiteral("settingsForm"));
 
@@ -358,8 +366,8 @@ SettingsForm::SettingsForm(Settings *settings, BlocklistInterceptor *interceptor
     m_updateVersionLabel->setObjectName(QStringLiteral("updateVersionLabel"));
 
     auto *updatesHint = new QLabel(
-        tr("Check GitHub for a newer version. If one is available, Cosmic will "
-           "open the download page so you can choose the installer for your system."),
+        tr("Cosmic downloads and verifies the update before installing it. "
+           "The browser must close to finish the update."),
         updatesPage);
     updatesHint->setObjectName(QStringLiteral("updatesHint"));
     updatesHint->setWordWrap(true);
@@ -372,7 +380,7 @@ SettingsForm::SettingsForm(Settings *settings, BlocklistInterceptor *interceptor
     auto *updateButtons = new QHBoxLayout;
     m_checkUpdatesButton = new QPushButton(tr("Check for updates"), updatesPage);
     m_checkUpdatesButton->setObjectName(QStringLiteral("checkUpdatesButton"));
-    m_downloadUpdateButton = new QPushButton(tr("Download update"), updatesPage);
+    m_downloadUpdateButton = new QPushButton(tr("Update Cosmic"), updatesPage);
     m_downloadUpdateButton->setObjectName(QStringLiteral("downloadUpdateButton"));
     m_downloadUpdateButton->setEnabled(false);
     updateButtons->addWidget(m_checkUpdatesButton);
@@ -397,11 +405,20 @@ SettingsForm::SettingsForm(Settings *settings, BlocklistInterceptor *interceptor
 
     connect(m_checkUpdatesButton, &QPushButton::clicked,
             this, &SettingsForm::checkForUpdates);
-    connect(m_downloadUpdateButton, &QPushButton::clicked, this, [this] {
-        if (!m_updateReleaseUrl.isEmpty() && !QDesktopServices::openUrl(m_updateReleaseUrl)) {
-            m_updateStatusLabel->setText(tr("Could not open the release page."));
-        }
+    connect(m_downloadUpdateButton, &QPushButton::clicked, this, &SettingsForm::startUpdate);
+    connect(m_updateDownload, &UpdateDownload::progress, this, [this](qint64 received, qint64 total) {
+        m_updateStatusLabel->setText(tr("Downloading update: %1%").arg(received * 100 / total));
     });
+    connect(m_updateDownload, &UpdateDownload::failed, this, [this](const QString &message) {
+        if (!m_updateTemporaryPath.isEmpty()) {
+            QFile::remove(m_updateTemporaryPath);
+            m_updateTemporaryPath.clear();
+        }
+        m_checkUpdatesButton->setEnabled(true);
+        m_downloadUpdateButton->setEnabled(true);
+        m_updateStatusLabel->setText(message);
+    });
+    connect(m_updateDownload, &UpdateDownload::finished, this, &SettingsForm::finishUpdate);
     connect(downloadSiteButton, &QPushButton::clicked, this, [this] {
         if (!QDesktopServices::openUrl(kDownloadPageUrl)) {
             m_updateStatusLabel->setText(tr("Could not open the download site."));
@@ -475,11 +492,18 @@ SettingsForm::SettingsForm(Settings *settings, BlocklistInterceptor *interceptor
     }
 }
 
+SettingsForm::~SettingsForm()
+{
+    if (!m_updateTemporaryPath.isEmpty()) {
+        QFile::remove(m_updateTemporaryPath);
+    }
+}
+
 void SettingsForm::checkForUpdates()
 {
     m_checkUpdatesButton->setEnabled(false);
     m_downloadUpdateButton->setEnabled(false);
-    m_updateReleaseUrl.clear();
+    m_updateAsset = {};
     m_updateStatusLabel->setText(tr("Checking for updates…"));
 
     QNetworkRequest request(kLatestReleaseApiUrl);
@@ -534,7 +558,25 @@ void SettingsForm::finishUpdateCheck(QNetworkReply *reply)
     }
 
     if (QVersionNumber::compare(latest, installed) > 0) {
-        m_updateReleaseUrl = kDownloadPageUrl;
+        QString platform;
+#if defined(Q_OS_LINUX)
+        if (QSysInfo::currentCpuArchitecture() == QLatin1String("x86_64")) {
+            platform = QStringLiteral("linux-x64");
+        }
+#elif defined(Q_OS_WIN)
+        if (QSysInfo::currentCpuArchitecture() == QLatin1String("x86_64")) {
+            platform = QStringLiteral("windows-x64");
+        }
+#elif defined(Q_OS_MACOS)
+        if (QSysInfo::currentCpuArchitecture() == QLatin1String("arm64")) {
+            platform = QStringLiteral("macos-arm64");
+        }
+#endif
+        QString error;
+        if (!Updates::findAsset(release, latest.toString(), platform, &m_updateAsset, &error)) {
+            m_updateStatusLabel->setText(tr("An update is available, but cannot be installed: %1").arg(error));
+            return;
+        }
         m_updateStatusLabel->setText(
             tr("Version %1 is available (installed: %2).")
                 .arg(latest.toString(), installed.toString()));
@@ -543,6 +585,144 @@ void SettingsForm::finishUpdateCheck(QNetworkReply *reply)
         m_updateStatusLabel->setText(
             tr("Cosmic is up to date (version %1).").arg(installed.toString()));
     }
+}
+
+void SettingsForm::startUpdate()
+{
+    QString destination;
+    bool executable = false;
+#if defined(Q_OS_LINUX)
+    const QFileInfo image(QFile::decodeName(qgetenv("APPIMAGE")));
+    destination = image.canonicalFilePath();
+    QFile current(destination);
+    if (destination.isEmpty() || !image.isFile() || !image.isExecutable()
+        || !current.open(QIODevice::ReadOnly)) {
+        m_updateStatusLabel->setText(tr("Automatic updates require a writable AppImage installation."));
+        return;
+    }
+    const QByteArray header = current.read(11);
+    if (header.left(4) != QByteArray("\x7f" "ELF", 4)
+        || header.mid(8, 3) != QByteArray("AI\x02", 3)) {
+        m_updateStatusLabel->setText(tr("The current executable is not a supported AppImage."));
+        return;
+    }
+    executable = true;
+#else
+#if defined(Q_OS_MACOS)
+    QDir bundle(QCoreApplication::applicationDirPath());
+    if (!bundle.cdUp() || !bundle.cdUp()
+        || !bundle.dirName().endsWith(QLatin1String(".app"))
+        || !QFileInfo(bundle.absolutePath()).isDir()
+        || !QFileInfo(bundle.absolutePath() + QStringLiteral("/../")).isWritable()) {
+        m_updateStatusLabel->setText(tr("Move Cosmic to a writable folder before updating."));
+        return;
+    }
+    QProcess bundleInfo;
+    bundleInfo.start(QStringLiteral("/usr/libexec/PlistBuddy"),
+                     {QStringLiteral("-c"), QStringLiteral("Print :CFBundleIdentifier"),
+                      bundle.filePath(QStringLiteral("Contents/Info.plist"))});
+    if (!bundleInfo.waitForFinished(5000) || bundleInfo.exitStatus() != QProcess::NormalExit
+        || bundleInfo.exitCode() != 0
+        || bundleInfo.readAllStandardOutput().trimmed() != QByteArray("app.cosmic.browser")) {
+        m_updateStatusLabel->setText(tr("The current application is not a supported Cosmic installation."));
+        return;
+    }
+#elif defined(Q_OS_WIN)
+    QDir installation(QCoreApplication::applicationDirPath());
+    if (installation.dirName().compare(QStringLiteral("bin"), Qt::CaseInsensitive) != 0
+        || !installation.cdUp()
+        || installation.entryList({QStringLiteral("unins*.exe")}, QDir::Files).isEmpty()) {
+        m_updateStatusLabel->setText(tr("Automatic updates require an installation made by the Cosmic setup."));
+        return;
+    }
+#endif
+    const QString extension =
+#if defined(Q_OS_WIN)
+        QStringLiteral(".exe");
+#else
+        QStringLiteral(".dmg");
+#endif
+    QTemporaryFile temporary(QDir::tempPath() + QStringLiteral("/cosmic-update-XXXXXX") + extension);
+    if (!temporary.open()) {
+        m_updateStatusLabel->setText(tr("Could not create a temporary update file."));
+        return;
+    }
+    destination = temporary.fileName();
+    temporary.setAutoRemove(false);
+    temporary.close();
+    m_updateTemporaryPath = destination;
+#endif
+    if (QMessageBox::question(this, tr("Update Cosmic"),
+                              tr("Cosmic will close to install the verified update. Continue?"))
+        != QMessageBox::Yes) {
+        if (!m_updateTemporaryPath.isEmpty()) {
+            QFile::remove(m_updateTemporaryPath);
+            m_updateTemporaryPath.clear();
+        }
+        return;
+    }
+    m_checkUpdatesButton->setEnabled(false);
+    m_downloadUpdateButton->setEnabled(false);
+    m_updateStatusLabel->setText(tr("Downloading update…"));
+    m_updateDownload->start(m_updateAsset, destination, executable);
+}
+
+void SettingsForm::finishUpdate(const QString &path)
+{
+#if defined(Q_OS_LINUX)
+    const QString script = QStringLiteral(
+        "i=0; while kill -0 \"$1\" 2>/dev/null; do "
+        "i=$((i+1)); [ \"$i\" -le 120 ] || exit 1; sleep 1; done; exec \"$2\"");
+    const bool started = QProcess::startDetached(QStringLiteral("/bin/sh"),
+        {QStringLiteral("-c"), script, QStringLiteral("cosmic-update"),
+         QString::number(QCoreApplication::applicationPid()), path});
+#elif defined(Q_OS_WIN)
+    QDir installation(QCoreApplication::applicationDirPath());
+    const bool validInstallation = installation.dirName().compare(
+        QStringLiteral("bin"), Qt::CaseInsensitive) == 0 && installation.cdUp();
+    const bool started = validInstallation && QProcess::startDetached(
+        path, {QStringLiteral("/DIR=") + installation.absolutePath()});
+#elif defined(Q_OS_MACOS)
+    QDir bundle(QCoreApplication::applicationDirPath());
+    const bool validBundle = bundle.cdUp() && bundle.cdUp()
+        && bundle.dirName().endsWith(QLatin1String(".app"));
+    QFile script(QStringLiteral(":/update-macos.sh"));
+    QTemporaryFile helper(QDir::tempPath() + QStringLiteral("/cosmic-update-helper-XXXXXX"));
+    bool started = false;
+    if (validBundle && script.open(QIODevice::ReadOnly) && helper.open()) {
+        const QByteArray contents = script.readAll();
+        if (helper.write(contents) == contents.size() && helper.flush()) {
+            const QString helperPath = helper.fileName();
+            helper.setAutoRemove(false);
+            helper.close();
+            started = QProcess::startDetached(QStringLiteral("/bin/sh"),
+                {helperPath, bundle.absolutePath(), path,
+                 QString::number(QCoreApplication::applicationPid()), helperPath});
+            if (!started) {
+                QFile::remove(helperPath);
+            }
+        }
+    }
+#else
+    const bool started = false;
+    Q_UNUSED(path);
+#endif
+    if (!started) {
+        m_checkUpdatesButton->setEnabled(true);
+#if defined(Q_OS_LINUX)
+        m_updateStatusLabel->setText(tr("The update was installed, but Cosmic could not restart. Close and reopen it."));
+#else
+        if (!m_updateTemporaryPath.isEmpty()) {
+            QFile::remove(m_updateTemporaryPath);
+            m_updateTemporaryPath.clear();
+        }
+        m_downloadUpdateButton->setEnabled(true);
+        m_updateStatusLabel->setText(tr("The update could not be started. Please restart Cosmic or use the download site."));
+#endif
+        return;
+    }
+    m_updateTemporaryPath.clear();
+    QCoreApplication::quit();
 }
 
 void SettingsForm::load()

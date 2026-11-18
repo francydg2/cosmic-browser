@@ -98,6 +98,13 @@ target_include_directories(cosmic_test_notes PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(cosmic_test_notes PRIVATE cosmic_core Qt6::Test)
 add_test(NAME notes COMMAND cosmic_test_notes)
 
+add_executable(cosmic_test_updateasset test_updateasset.cpp)
+target_include_directories(cosmic_test_updateasset PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(cosmic_test_updateasset PRIVATE cosmic_core Qt6::Test)
+target_compile_definitions(cosmic_test_updateasset PRIVATE
+    COSMIC_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME update_asset COMMAND cosmic_test_updateasset)
+
 # 6d) Encrypted password vault (OpenSSL AES-256-GCM + PBKDF2).
 add_executable(cosmic_test_vault test_vault.cpp)
 target_include_directories(cosmic_test_vault PRIVATE ${CMAKE_SOURCE_DIR}/src)

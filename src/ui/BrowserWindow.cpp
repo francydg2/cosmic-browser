@@ -6,6 +6,7 @@
 #include "core/Bookmarks.h"
 #include "core/UserCatalog.h"
 #include "core/Logging.h"
+#include "core/Paths.h"
 #include "core/PasswordVault.h"
 #include "core/Settings.h"
 #include "ui/NameColorDialog.h"
@@ -78,6 +79,22 @@ namespace {
 
 const auto kDefaultId = "default";
 const auto kSettingsUrl = "cosmic://settings";
+
+QString workspacesFilePath(const QString &userId)
+{
+    return Paths::configDir() + QStringLiteral("/workspaces/")
+        + QString::fromLatin1(userId.toUtf8().toHex()) + QStringLiteral(".json");
+}
+
+bool readWorkspaces(const QString &userId, QMap<QString, QList<SessionWindow>> *workspaces)
+{
+    const QString filePath = workspacesFilePath(userId);
+    if (!QFileInfo::exists(filePath)) {
+        return true;
+    }
+    QString storedUser;
+    return Session::loadUsers(filePath, &storedUser, workspaces) && storedUser == userId;
+}
 
 const QString kExtractPasswordScript = QStringLiteral(R"JS(
 (function () {
@@ -360,6 +377,8 @@ BrowserWindow::BrowserWindow(Browser *browser, QWidget *parent)
     m_actions->define(QStringLiteral("tabs.search"), tr("Search tabs…"),
                       QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_A),
                       [this] { showTabSearch(); });
+    m_actions->define(QStringLiteral("workspaces.open"), tr("Saved workspaces…"), {},
+                      [this] { showWorkspaces(); });
     m_actions->define(QStringLiteral("page.reader"), tr("Reader mode"), {},
                       [this] { showReader(); });
     m_actions->define(QStringLiteral("page.translate"), tr("Translate page…"), {},
@@ -635,6 +654,145 @@ void BrowserWindow::showTrackerRadar()
     m_trackerRadarDialog->show();
     m_trackerRadarDialog->raise();
     m_trackerRadarDialog->activateWindow();
+}
+
+void BrowserWindow::showWorkspaces()
+{
+    const QString filePath = workspacesFilePath(m_userId);
+    const QString directory = QFileInfo(filePath).absolutePath();
+    QMap<QString, QList<SessionWindow>> workspaces;
+    if (!readWorkspaces(m_userId, &workspaces)) {
+        QMessageBox::warning(this, tr("Saved workspaces"),
+                             tr("Could not read the saved workspaces. The file was not changed."));
+        return;
+    }
+
+    QDialog dialog(this);
+    dialog.setObjectName(QStringLiteral("workspacesDialog"));
+    dialog.setWindowTitle(tr("Saved workspaces"));
+    dialog.resize(480, 380);
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *hint = new QLabel(tr("Save the current tabs and groups. Opening a workspace adds its "
+                                "tabs without closing the ones already open."), &dialog);
+    hint->setWordWrap(true);
+    layout->addWidget(hint);
+    auto *list = new QListWidget(&dialog);
+    list->setObjectName(QStringLiteral("workspacesList"));
+    layout->addWidget(list);
+    auto *buttons = new QHBoxLayout;
+    auto *saveButton = new QPushButton(tr("Save current…"), &dialog);
+    auto *openButton = new QPushButton(tr("Open"), &dialog);
+    auto *deleteButton = new QPushButton(tr("Delete…"), &dialog);
+    saveButton->setObjectName(QStringLiteral("workspaceSave"));
+    openButton->setObjectName(QStringLiteral("workspaceOpen"));
+    deleteButton->setObjectName(QStringLiteral("workspaceDelete"));
+    buttons->addWidget(saveButton);
+    buttons->addWidget(openButton);
+    buttons->addWidget(deleteButton);
+    buttons->addStretch();
+    auto *closeButton = new QPushButton(tr("Close"), &dialog);
+    buttons->addWidget(closeButton);
+    layout->addLayout(buttons);
+
+    const auto refresh = [&] {
+        list->clear();
+        list->addItems(workspaces.keys());
+        openButton->setEnabled(list->count() > 0);
+        deleteButton->setEnabled(list->count() > 0);
+        if (list->count()) {
+            list->setCurrentRow(0);
+        }
+    };
+    const auto persist = [&](const QMap<QString, QList<SessionWindow>> &updated) {
+        if (!QDir().mkpath(directory) || !Session::saveUsers(filePath, m_userId, updated)) {
+            QMessageBox::warning(&dialog, tr("Saved workspaces"),
+                                 tr("Could not save workspaces. Please check the storage location."));
+            return false;
+        }
+        workspaces = updated;
+        refresh();
+        return true;
+    };
+    connect(saveButton, &QPushButton::clicked, &dialog, [&] {
+        bool accepted = false;
+        const QString name = QInputDialog::getText(&dialog, tr("Save workspace"),
+            tr("Workspace name:"), QLineEdit::Normal, QString(), &accepted).trimmed();
+        if (!accepted) {
+            return;
+        }
+        if (name.isEmpty() || name.size() > 100) {
+            QMessageBox::warning(&dialog, tr("Save workspace"),
+                                 tr("Choose a name between 1 and 100 characters."));
+            return;
+        }
+        if (workspaces.contains(name)
+            && QMessageBox::question(&dialog, tr("Replace workspace"),
+                tr("Replace the saved workspace “%1” with the current tabs?").arg(name))
+                != QMessageBox::Yes) {
+            return;
+        }
+        const SessionWindow state = sessionState();
+        if (state.tabs.isEmpty()) {
+            QMessageBox::information(&dialog, tr("Save workspace"),
+                                     tr("Open a browser tab before saving a workspace."));
+            return;
+        }
+        auto updated = workspaces;
+        updated.insert(name, {state});
+        persist(updated);
+    });
+    const auto openWorkspace = [&] {
+        const QListWidgetItem *item = list->currentItem();
+        if (!item) {
+            return;
+        }
+        const auto windows = workspaces.value(item->text());
+        if (windows.size() != 1 || windows.first().tabs.isEmpty()) {
+            QMessageBox::warning(&dialog, tr("Saved workspaces"),
+                                 tr("This workspace does not contain a valid set of tabs."));
+            return;
+        }
+        this->openWorkspace(windows.first());
+        dialog.accept();
+    };
+    connect(openButton, &QPushButton::clicked, &dialog, openWorkspace);
+    connect(list, &QListWidget::itemDoubleClicked, &dialog,
+            [&](QListWidgetItem *) { openWorkspace(); });
+    connect(deleteButton, &QPushButton::clicked, &dialog, [&] {
+        const QListWidgetItem *item = list->currentItem();
+        if (!item || QMessageBox::question(&dialog, tr("Delete workspace"),
+                tr("Delete the saved workspace “%1”? Open tabs will not be closed.").arg(item->text()))
+                != QMessageBox::Yes) {
+            return;
+        }
+        auto updated = workspaces;
+        updated.remove(item->text());
+        persist(updated);
+    });
+    connect(closeButton, &QPushButton::clicked, &dialog, &QDialog::reject);
+    refresh();
+    dialog.exec();
+}
+
+void BrowserWindow::openWorkspace(const SessionWindow &state)
+{
+    QMap<QString, QString> groupIds;
+    for (const SessionGroup &group : state.groups) {
+        if (group.id.isEmpty() || group.name.trimmed().isEmpty() || groupIds.contains(group.id)) {
+            continue;
+        }
+        groupIds.insert(group.id, createGroup(group.name, group.color));
+    }
+    for (const SessionTab &tab : state.tabs) {
+        addTab(tab.url, true, -1, m_userId, tab.pinned, groupIds.value(tab.group));
+    }
+    for (const SessionGroup &group : state.groups) {
+        if (group.collapsed && groupIds.contains(group.id)) {
+            setGroupCollapsed(groupIds.value(group.id), true);
+        }
+    }
+    updateGroupStrip();
+    statusBar()->showMessage(tr("Workspace opened; existing tabs were kept."), 5000);
 }
 
 void BrowserWindow::showTabSearch()
@@ -1528,7 +1686,7 @@ void BrowserWindow::setTabPinned(int index, bool pinned)
         content->setPinnedState(true);
 
         int target = 0;
-        while (target < index && tabAt(target)->isPinned()) {
+        while (target < index && tabAt(target) && tabAt(target)->isPinned()) {
             ++target;
         }
         if (index != target) {
@@ -1543,7 +1701,7 @@ void BrowserWindow::setTabPinned(int index, bool pinned)
     } else {
         int pinnedCount = 0;
         for (int i = 0; i < m_tabs->count(); ++i) {
-            if (tabAt(i)->isPinned()) {
+            if (tabAt(i) && tabAt(i)->isPinned()) {
                 ++pinnedCount;
             }
         }
@@ -2444,6 +2602,30 @@ void BrowserWindow::applyUILayout()
     toolsButton->setPopupMode(QToolButton::InstantPopup);
     auto *toolsMenu = new QMenu(toolsButton);
     toolsMenu->addAction(m_actions->action(QStringLiteral("tabs.search")));
+    auto *workspacesMenu = toolsMenu->addMenu(tr("Saved workspaces"));
+    workspacesMenu->setObjectName(QStringLiteral("workspacesMenu"));
+    connect(workspacesMenu, &QMenu::aboutToShow, this, [this, workspacesMenu] {
+        workspacesMenu->clear();
+        workspacesMenu->addAction(m_actions->action(QStringLiteral("workspaces.open")));
+        workspacesMenu->addSeparator();
+        QMap<QString, QList<SessionWindow>> workspaces;
+        if (!readWorkspaces(m_userId, &workspaces)) {
+            workspacesMenu->addAction(tr("Could not read workspaces"))->setEnabled(false);
+            return;
+        }
+        bool hasEntries = false;
+        for (auto it = workspaces.cbegin(); it != workspaces.cend(); ++it) {
+            if (it.value().size() != 1 || it.value().first().tabs.isEmpty()) {
+                continue;
+            }
+            hasEntries = true;
+            const SessionWindow state = it.value().first();
+            workspacesMenu->addAction(it.key(), this, [this, state] { openWorkspace(state); });
+        }
+        if (!hasEntries) {
+            workspacesMenu->addAction(tr("No saved workspaces"))->setEnabled(false);
+        }
+    });
     toolsMenu->addAction(m_actions->action(QStringLiteral("page.reader")));
     toolsMenu->addAction(m_actions->action(QStringLiteral("page.translate")));
     toolsMenu->addAction(m_actions->action(QStringLiteral("page.qr")));

@@ -26,6 +26,23 @@ Add the **Ricerca Cosmic** widget from the Android home screen's widget picker.
 Tapping it opens Cosmic and focuses the address bar; searches use the selected
 search engine.
 
+On startup and from Settings > Updates, the app checks GitHub releases for a
+newer Android APK, including beta versions. With your consent it downloads the
+APK, verifies its SHA-256, package ID, version code and signing certificate,
+then asks Android to install it. Android may require permission to install
+unknown apps and always asks for confirmation. Checks contact the GitHub API
+and reveal the device's IP address to GitHub. GitHub-hosted direct distribution
+is separate from Google Play; Play policies restrict self-updating apps.
+The previously published beta 3 does not contain this updater, so an APK with
+the updater must first be installed manually over it using the same signing
+key. If Android restarts Cosmic while granting installation permission, check
+for and download the update again from Settings > Updates.
+
+Release APKs must use a higher `versionCode`, a unique `versionName` in the
+form `X.Y.Z`, `X.Y.Z-beta` or `X.Y.Z-betaN`, and the matching asset name
+`cosmic-X.Y.Z-android[-betaN].apk`. The release tag must be `vX.Y.Z` or the
+full version, and GitHub must report the asset's SHA-256 digest.
+
 ## Build
 
 Install JDK 17 or newer and Android SDK platform/build tools for API 35, then:
