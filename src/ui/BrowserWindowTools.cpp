@@ -11,6 +11,13 @@
 #include "core/Translator.h"
 #include "ui/AiSidebar.h"
 #include "ui/PageTranslator.h"
+#include "browser/PerformanceMonitor.h"
+#include "ui/PerformanceDialog.h"
+#include "browser/FocusController.h"
+#include "ui/FocusDialog.h"
+#include "ui/FocusPill.h"
+#include "ui/PrivacyDashboardDialog.h"
+#include "ui/TabManagerDialog.h"
 #include "ui/Toast.h"
 #include "ui/TabContent.h"
 #include "web/WebPage.h"
@@ -34,7 +41,10 @@
 #include <QSharedPointer>
 #include <QTabWidget>
 #include <QTimer>
+#include <QWebEnginePage>
+#include <QWebEngineProfile>
 #include <QWebEngineScript>
+#include <QWebEngineView>
 
 void BrowserWindow::fetchPageContext(TabContent *tab, std::function<void(Ai::PageContext)> done)
 {
@@ -121,6 +131,28 @@ void BrowserWindow::toggleAiSidebar()
 void BrowserWindow::buildToolsMenuEntries(QMenu *menu)
 {
     menu->addAction(m_actions->action(QStringLiteral("ai.assistant")));
+    menu->addAction(m_actions->action(QStringLiteral("tabs.manager")));
+    menu->addAction(m_actions->action(QStringLiteral("privacy.dashboard")));
+    menu->addAction(m_actions->action(QStringLiteral("performance.center")));
+    menu->addAction(m_actions->action(QStringLiteral("inspector.toggle")));
+    auto *focusMenu = menu->addMenu(tr("Cosmic Focus"));
+    focusMenu->setObjectName(QStringLiteral("focusMenu"));
+    connect(focusMenu, &QMenu::aboutToShow, this, [this, focusMenu] {
+        focusMenu->clear();
+        FocusController *focus = m_browser->focus();
+        for (const FocusProfile &profile : Focus::builtInProfiles()) {
+            focusMenu->addAction(tr("%1 · %2 min").arg(tr(profile.name.toUtf8().constData())).arg(profile.minutes),
+                                 this, [this, focus, profile] {
+                focus->rememberProfile(profile.id);
+                focus->start(profile, profile.minutes);
+                applyFocusWorkspace(profile.workspace);
+            });
+        }
+        focusMenu->addAction(tr("Focus settings…"), this, [this] { showFocusDialog(); });
+        focusMenu->addSeparator();
+        QAction *end = focusMenu->addAction(tr("End Focus"), focus, &FocusController::stop);
+        end->setEnabled(focus->isActive());
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -365,4 +397,208 @@ void BrowserWindow::translateSelection()
         dialog->resize(520, 300);
         dialog->show();
     });
+}
+
+// ---------------------------------------------------------------------------
+// Smart Tab Manager
+// ---------------------------------------------------------------------------
+
+QList<TabInfo> BrowserWindow::tabInfos() const
+{
+    QList<TabInfo> infos;
+    for (int i = 0; i < m_tabs->count(); ++i) {
+        const TabContent *tab = tabAt(i);
+        if (!tab) {
+            continue;
+        }
+        TabInfo info;
+        info.index = i;
+        info.title = m_tabs->tabText(i);
+        info.groupId = tab->groupId();
+        info.pinned = tab->isPinned();
+        info.current = i == m_tabs->currentIndex();
+        info.lastActiveMs = tab->lastActiveMs();
+        if (!tab->isShowingNewTab() && !tab->isShowingCrash()) {
+            const WebPage *page = tab->webView()->webPage();
+            info.url = page->url();
+            info.audible = page->recentlyAudible();
+            info.suspended = page->lifecycleState() == QWebEnginePage::LifecycleState::Discarded;
+        }
+        infos.append(info);
+    }
+    return infos;
+}
+
+bool BrowserWindow::suspendTab(int index)
+{
+    TabContent *tab = tabAt(index);
+    if (!tab || tab == currentTab() || tab->isShowingNewTab() || tab->isShowingCrash()) {
+        return false;
+    }
+    WebPage *page = tab->webView()->webPage();
+    if (page->isLoading() || page->recentlyAudible()) {
+        return false;
+    }
+    const QUrl url = page->url();
+    if (url.scheme() != QLatin1String("http") && url.scheme() != QLatin1String("https")) {
+        return false;
+    }
+    if (page->lifecycleState() == QWebEnginePage::LifecycleState::Discarded) {
+        return false;
+    }
+    page->setLifecycleState(QWebEnginePage::LifecycleState::Discarded);
+    return true;
+}
+
+void BrowserWindow::showTabManager()
+{
+    if (!m_tabManager) {
+        m_tabManager = new TabManagerDialog(this);
+    }
+    m_tabManager->show();
+    m_tabManager->raise();
+    m_tabManager->activateWindow();
+}
+
+void BrowserWindow::showPrivacyDashboard()
+{
+    if (!m_browser) {
+        return;
+    }
+    if (!m_privacyDashboard) {
+        m_privacyDashboard = new PrivacyDashboardDialog(m_browser, this);
+    }
+    m_privacyDashboard->show();
+    m_privacyDashboard->raise();
+    m_privacyDashboard->activateWindow();
+}
+
+void BrowserWindow::showPerformanceCenter()
+{
+    if (!m_browser) {
+        return;
+    }
+    if (!m_performanceDialog) {
+        m_performanceDialog = new PerformanceDialog(this);
+    }
+    m_performanceDialog->show();
+    m_performanceDialog->raise();
+    m_performanceDialog->activateWindow();
+}
+
+// ---------------------------------------------------------------------------
+// Web Inspector: the Chromium DevTools of the engine, docked at the bottom.
+// Console, Elements, Network, Sources, Application and Performance panels
+// are DevTools' own; Cosmic only hosts them and follows the current tab.
+// ---------------------------------------------------------------------------
+
+void BrowserWindow::bindInspector()
+{
+    if (!m_inspectorView || !m_inspectorDock || !m_inspectorDock->isVisible()) {
+        return;
+    }
+    if (m_inspectedPage) {
+        m_inspectedPage->setDevToolsPage(nullptr);
+        m_inspectedPage.clear();
+    }
+    QWebEnginePage *old = m_inspectorView->page();
+    TabContent *tab = currentTab();
+    if (!tab || tab->isShowingNewTab() || tab->isShowingCrash()) {
+        m_inspectorView->setHtml(tr("<body style='background:#14161d;color:#98a2b2;font:14px sans-serif;"
+                                    "padding:24px'>Open a web page to inspect it.</body>"));
+        return;
+    }
+    WebPage *page = tab->webView()->webPage();
+    auto *devtools = new QWebEnginePage(page->profile(), m_inspectorView);
+    m_inspectorView->setPage(devtools);
+    page->setDevToolsPage(devtools);
+    m_inspectedPage = page;
+    if (old && old != devtools) {
+        old->deleteLater();
+    }
+}
+
+void BrowserWindow::toggleWebInspector()
+{
+    if (!m_browser) {
+        return;
+    }
+    if (m_inspectorDock && m_inspectorDock->isVisible()) {
+        m_inspectorDock->hide();
+        return;
+    }
+    TabContent *tab = currentTab();
+    if (!tab || tab->isShowingNewTab() || tab->isShowingCrash()) {
+        statusBar()->showMessage(tr("Open a web page to inspect it."), 4000);
+        return;
+    }
+    if (!m_inspectorDock) {
+        m_inspectorView = new QWebEngineView(this);
+        m_inspectorDock = new QDockWidget(tr("Web Inspector"), this);
+        m_inspectorDock->setObjectName(QStringLiteral("inspectorDock"));
+        m_inspectorDock->setWidget(m_inspectorView);
+        m_inspectorDock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::RightDockWidgetArea);
+        addDockWidget(Qt::BottomDockWidgetArea, m_inspectorDock);
+        m_inspectorDock->resize(width(), 320);
+        connect(m_inspectorDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+            if (visible) {
+                bindInspector();
+            } else if (m_inspectedPage) {
+                m_inspectedPage->setDevToolsPage(nullptr);
+                m_inspectedPage.clear();
+            }
+        });
+        connect(m_tabs, &QTabWidget::currentChanged, this, [this] { bindInspector(); });
+    }
+    m_inspectorDock->show();
+    bindInspector();
+}
+
+// ---------------------------------------------------------------------------
+// Cosmic Focus
+// ---------------------------------------------------------------------------
+
+void BrowserWindow::showFocusDialog()
+{
+    if (!m_browser) {
+        return;
+    }
+    if (!m_focusDialog) {
+        m_focusDialog = new FocusDialog(this);
+    }
+    m_focusDialog->show();
+    m_focusDialog->raise();
+    m_focusDialog->activateWindow();
+}
+
+void BrowserWindow::applyFocusChrome(bool active)
+{
+    if (!m_focusPill || !m_browser) {
+        return;
+    }
+    const FocusController *focus = m_browser->focus();
+    if (active && focus->profile().hideChrome) {
+        const QList<QWidget *> targets{m_tabs->tabBar(), m_groupStrip, statusBar(),
+                                       m_aiDock.data(), m_inspectorDock.data(), m_splitPanel.data()};
+        for (QWidget *widget : targets) {
+            if (widget && !m_focusHidden.contains(widget)) {
+                m_focusHidden.insert(widget, widget->isVisibleTo(this));
+                widget->hide();
+            }
+        }
+    } else {
+        for (auto it = m_focusHidden.cbegin(); it != m_focusHidden.cend(); ++it) {
+            if (it.key() && it.value()) {
+                it.key()->show();
+            }
+        }
+        m_focusHidden.clear();
+    }
+    if (active) {
+        m_focusPill->setRemaining(Focus::formatRemaining(focus->remainingMs()));
+        m_focusPill->show();
+        m_focusPill->raise();
+    } else {
+        m_focusPill->hide();
+    }
 }

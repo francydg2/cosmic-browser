@@ -38,6 +38,10 @@ public:
         int blocked = 0;
         int matchedRules = 0;
         QVector<Event> recent;
+        /// Cumulative since start or the last reset (not capped like \c recent).
+        QHash<QString, int> bySite;
+        QHash<QString, int> byHost;
+        QHash<int, int> byCategory; // key: static_cast<int>(Category)
     };
     explicit BlocklistInterceptor(bool enabled = true, QObject *parent = nullptr);
 
@@ -81,6 +85,9 @@ private:
     QVector<Event> m_recent;
     QSet<QString> m_matchedRules;
     int m_blocked = 0;
+    QHash<QString, int> m_bySite;
+    QHash<QString, int> m_byHost;
+    QHash<int, int> m_byCategory;
     QAtomicInt m_enabled{1};
     QAtomicInt m_dnt{1};
 };

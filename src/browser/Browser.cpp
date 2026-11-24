@@ -1,6 +1,8 @@
 #include "browser/Browser.h"
 #include "browser/AiService.h"
 #include "browser/DownloadManager.h"
+#include "browser/FocusController.h"
+#include "browser/PerformanceMonitor.h"
 #include "core/Bookmarks.h"
 #include "core/Notes.h"
 #include "core/UserCatalog.h"
@@ -49,6 +51,8 @@ Browser::Browser()
     m_ai = std::make_unique<AiService>(
         m_settings.get(), m_vault.get(),
         Paths::dataDir() + QStringLiteral("/ai-conversations.json"));
+    m_performance = std::make_unique<PerformanceMonitor>(m_settings.get());
+    m_performance->start();
     m_uiConfig = UiLayout::defaultConfiguration();
     loadUiConfiguration();
 
@@ -59,6 +63,18 @@ Browser::Browser()
                                m_settings->permissionPolicy(QStringLiteral("media")));
     m_pagePolicy.setPermission(QStringLiteral("notifications"),
                                m_settings->permissionPolicy(QStringLiteral("notifications")));
+
+    {
+        const QJsonObject remembered = m_settings->section(QStringLiteral("sitePermissions"));
+        for (auto it = remembered.begin(); it != remembered.end(); ++it) {
+            const QString value = it.value().toString();
+            if (value == QLatin1String("allow") || value == QLatin1String("block")) {
+                m_pagePolicy.sites.insert(it.key(), value);
+            }
+        }
+    }
+
+    m_focus = std::make_unique<FocusController>(m_settings.get(), &m_pagePolicy);
 
     QObject::connect(m_settings.get(), &Settings::httpsOnlyChanged,
                      [this](bool enabled) { m_pagePolicy.httpsOnly = enabled; });
@@ -146,6 +162,38 @@ bool Browser::saveUiConfiguration(const UIConfiguration &cfg)
     }
     m_uiConfig = cfg;
     return true;
+}
+
+QList<QWebEngineProfile *> Browser::allProfiles()
+{
+    QList<QWebEngineProfile *> profiles{profileForUser(QString::fromLatin1(kDefaultId))};
+    if (m_users) {
+        for (const BrowseUser &user : m_users->users()) {
+            if (QWebEngineProfile *profile = profileForUser(user.id)) {
+                profiles.append(profile);
+            }
+        }
+    }
+    return profiles;
+}
+
+void Browser::setSitePermission(const QString &host, const QString &feature, const QString &policy)
+{
+    const QString key = PagePolicy::siteKey(host, feature);
+    if (host.isEmpty() || key.isEmpty()) {
+        return;
+    }
+    if (policy == QLatin1String("allow") || policy == QLatin1String("block")) {
+        m_pagePolicy.sites.insert(key, policy);
+    } else {
+        m_pagePolicy.sites.remove(key);
+    }
+    QJsonObject section;
+    for (auto it = m_pagePolicy.sites.cbegin(); it != m_pagePolicy.sites.cend(); ++it) {
+        section.insert(it.key(), it.value());
+    }
+    m_settings->setSection(QStringLiteral("sitePermissions"), section);
+    m_settings->save();
 }
 
 void Browser::clearBrowsingData()

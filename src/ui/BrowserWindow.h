@@ -3,11 +3,13 @@
 #include "browser/AppWindow.h"
 #include "core/AiPrompt.h"
 #include "core/Session.h"
+#include "core/TabAnalysis.h"
 #include "ui/TabContent.h"
 #include "web/WebPage.h"
 #include "web/WebPageDelegate.h"
 
 #include <QMainWindow>
+#include <QHash>
 #include <QPointer>
 #include <QStringList>
 #include <QVector>
@@ -23,9 +25,15 @@ class DownloadsDialog;
 class NotesDialog;
 class TrackerRadarDialog;
 class Toast;
+class TabManagerDialog;
+class PrivacyDashboardDialog;
+class PerformanceDialog;
+class FocusDialog;
+class FocusPill;
 class AiSidebar;
 class PageTranslator;
 class QDockWidget;
+class QWebEngineView;
 class QTabWidget;
 class QProgressBar;
 class QDialog;
@@ -50,6 +58,9 @@ struct UIConfiguration;
 class BrowserWindow : public QMainWindow, public AppWindow, public WebPageDelegate
 {
     Q_OBJECT
+    friend class TabManagerDialog;
+    friend class PerformanceDialog;
+    friend class FocusDialog;
 
 public:
     explicit BrowserWindow(Browser *browser, QWidget *parent = nullptr);
@@ -127,6 +138,19 @@ private:
     void showTabSearch();
 
     // Cosmic 0.2.0 tools (implemented in BrowserWindowTools.cpp)
+    void showTabManager();
+    void showPrivacyDashboard();
+    void showPerformanceCenter();
+    void showFocusDialog();
+    void applyFocusChrome(bool active);
+    void applyFocusWorkspace(const QString &name);
+    QStringList workspaceNames() const;
+    void toggleWebInspector();
+    void bindInspector();
+    QList<TabInfo> tabInfos() const;
+    /// Discards a background tab's page to free memory (it reloads when
+    /// shown again). False when the tab cannot be suspended safely.
+    bool suspendTab(int index);
     void toggleAiSidebar();
     void fetchPageContext(TabContent *tab, std::function<void(Ai::PageContext)> done);
     void buildToolsMenuEntries(QMenu *menu);
@@ -205,6 +229,15 @@ private:
     QPointer<NotesDialog> m_notesDialog;
     QPointer<TrackerRadarDialog> m_trackerRadarDialog;
     QPointer<QDialog> m_tabSearchDialog;
+    QPointer<TabManagerDialog> m_tabManager;
+    QPointer<PrivacyDashboardDialog> m_privacyDashboard;
+    QPointer<PerformanceDialog> m_performanceDialog;
+    QPointer<FocusDialog> m_focusDialog;
+    FocusPill *m_focusPill = nullptr;
+    QHash<QWidget *, bool> m_focusHidden;
+    QPointer<QDockWidget> m_inspectorDock;
+    QPointer<QWebEngineView> m_inspectorView;
+    QPointer<WebPage> m_inspectedPage;
     Toast *m_toast = nullptr;
     QPointer<QDockWidget> m_aiDock;
     AiSidebar *m_aiSidebar = nullptr;

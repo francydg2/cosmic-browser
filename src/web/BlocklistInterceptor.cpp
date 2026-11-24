@@ -138,6 +138,9 @@ bool BlocklistInterceptor::tryBlock(const QUrl &url, const QUrl &firstParty)
         QMutexLocker locker(&m_statisticsLock);
         count = ++m_blocked;
         m_matchedRules.insert(rule);
+        m_bySite[firstParty.host().toLower()]++;
+        m_byHost[url.host().toLower()]++;
+        m_byCategory[static_cast<int>(category)]++;
         if (m_recent.size() == 500) {
             m_recent.removeFirst();
         }
@@ -165,7 +168,8 @@ int BlocklistInterceptor::ruleCount() const
 BlocklistInterceptor::Statistics BlocklistInterceptor::statistics() const
 {
     QMutexLocker locker(&m_statisticsLock);
-    return {m_blocked, static_cast<int>(m_matchedRules.size()), m_recent};
+    return {m_blocked, static_cast<int>(m_matchedRules.size()), m_recent,
+            m_bySite, m_byHost, m_byCategory};
 }
 
 void BlocklistInterceptor::clearStatistics()
@@ -175,6 +179,9 @@ void BlocklistInterceptor::clearStatistics()
         m_blocked = 0;
         m_recent.clear();
         m_matchedRules.clear();
+        m_bySite.clear();
+        m_byHost.clear();
+        m_byCategory.clear();
     }
     emit blockedCountChanged(0);
     emit statisticsChanged();

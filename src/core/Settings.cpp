@@ -22,7 +22,7 @@ const auto kKeyAccent = "appearance.accent";
 const auto kKeyTabPosition = "tabs.position";
 const auto kKeyRamSaver = "performance.ramSaver";
 
-const char *const kSections[] = {"ai", "translation", "focus", "performance"};
+const char *const kSections[] = {"ai", "translation", "focus", "performance", "sitePermissions"};
 
 const auto kDefaultEngine = "duckduckgo";
 const auto kDefaultAccent = "#7c6cf0";

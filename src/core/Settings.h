@@ -76,7 +76,7 @@ public:
     void setRamSaverEnabled(bool enabled);
 
     /// Free-form sections owned by individual features ("ai",
-    /// "translation", "focus", "performance"). Each feature validates
+    /// "translation", "focus", "performance", "sitePermissions"). Each feature validates
     /// its own content; unknown section names are ignored.
     QJsonObject section(const QString &name) const;
     void setSection(const QString &name, const QJsonObject &values);

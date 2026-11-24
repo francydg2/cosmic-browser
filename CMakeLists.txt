@@ -101,6 +101,12 @@ add_library(cosmic_core STATIC
     src/core/AiPrompt.h
     src/core/AiPrompt.cpp
     src/core/AiProvider.h
+    src/core/Focus.h
+    src/core/Focus.cpp
+    src/core/ProcessStats.h
+    src/core/ProcessStats.cpp
+    src/core/TabAnalysis.h
+    src/core/TabAnalysis.cpp
     src/core/Translator.h
     src/core/Translator.cpp
     src/core/AiProvider.cpp
@@ -135,6 +141,10 @@ add_library(cosmic_core STATIC
     src/browser/UpdateDownload.cpp
     src/browser/AiClient.h
     src/browser/AiService.h
+    src/browser/FocusController.h
+    src/browser/FocusController.cpp
+    src/browser/PerformanceMonitor.h
+    src/browser/PerformanceMonitor.cpp
     src/browser/AiService.cpp
     src/browser/AiClient.cpp
     src/browser/Browser.h
@@ -173,6 +183,16 @@ add_library(cosmic_core STATIC
     src/ui/AiSettingsDialog.cpp
     src/ui/PageTranslator.h
     src/ui/PageTranslator.cpp
+    src/ui/TabManagerDialog.h
+    src/ui/TabManagerDialog.cpp
+    src/ui/PrivacyDashboardDialog.h
+    src/ui/PrivacyDashboardDialog.cpp
+    src/ui/PerformanceDialog.h
+    src/ui/PerformanceDialog.cpp
+    src/ui/FocusDialog.h
+    src/ui/FocusDialog.cpp
+    src/ui/FocusPill.h
+    src/ui/FocusPill.cpp
     src/ui/Toast.h
     src/ui/Toast.cpp
     src/ui/DownloadsDialog.h

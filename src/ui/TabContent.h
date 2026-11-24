@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QDateTime>
 #include <QStackedWidget>
 #include <QUrl>
 #include <QWebEnginePage>
@@ -49,6 +50,10 @@ public:
     bool isPinned() const { return m_pinned; }
     void setPinnedState(bool pinned) { m_pinned = pinned; }
 
+    /// Last time this tab was shown to the user (creation counts).
+    qint64 lastActiveMs() const { return m_lastActiveMs; }
+    void touch() { m_lastActiveMs = QDateTime::currentMSecsSinceEpoch(); }
+
     QString groupId() const { return m_groupId; }
     void setGroupId(const QString &id) { m_groupId = id; }
 
@@ -86,4 +91,5 @@ private:
     bool m_pinned = false;
     QString m_groupId;
     QWidget *m_closeButton = nullptr;
+    qint64 m_lastActiveMs = QDateTime::currentMSecsSinceEpoch();
 };

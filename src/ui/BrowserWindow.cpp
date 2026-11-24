@@ -14,6 +14,9 @@
 #include "ui/NotesDialog.h"
 #include "ui/TrackerRadarDialog.h"
 #include "ui/Toast.h"
+#include "ui/FocusPill.h"
+#include "browser/FocusController.h"
+#include "browser/PerformanceMonitor.h"
 #include "ui/NewTabPage.h"
 #include "ui/SettingsForm.h"
 #include "ui/Style.h"
@@ -216,6 +219,11 @@ BrowserWindow::BrowserWindow(Browser *browser, QWidget *parent)
     connect(m_tabs, &QTabWidget::tabCloseRequested, this, &BrowserWindow::closeTab);
     connect(m_tabs, &QTabWidget::currentChanged, this, &BrowserWindow::updateChrome);
     connect(m_tabs, &QTabWidget::currentChanged, this, [this] {
+        if (TabContent *tab = currentTab()) {
+            tab->touch();
+        }
+    });
+    connect(m_tabs, &QTabWidget::currentChanged, this, [this] {
         if (m_fullScreenPage && m_fullScreenPage != (m_splitContent
                 ? m_splitContent->webView()->webPage() : nullptr)
             && (!currentTab() || currentTab()->webView()->webPage() != m_fullScreenPage)) {
@@ -378,10 +386,20 @@ BrowserWindow::BrowserWindow(Browser *browser, QWidget *parent)
     m_actions->define(QStringLiteral("tabs.search"), tr("Search tabs…"),
                       QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_A),
                       [this] { showTabSearch(); });
+    m_actions->define(QStringLiteral("tabs.manager"), tr("Tab Manager…"),
+                      QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_M), [this] { showTabManager(); });
+    m_actions->define(QStringLiteral("privacy.dashboard"), tr("Privacy Dashboard…"), {},
+                      [this] { showPrivacyDashboard(); });
+    m_actions->define(QStringLiteral("performance.center"), tr("Performance Center…"), {},
+                      [this] { showPerformanceCenter(); });
+    QAction *inspector = m_actions->define(QStringLiteral("inspector.toggle"), tr("Web Inspector"),
+                      QKeySequence(Qt::Key_F12), [this] { toggleWebInspector(); });
+    inspector->setShortcuts({QKeySequence(Qt::Key_F12),
+                             QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_I)});
     m_actions->define(QStringLiteral("workspaces.open"), tr("Saved workspaces…"), {},
                       [this] { showWorkspaces(); });
     m_actions->define(QStringLiteral("ai.assistant"), tr("Cosmic AI Assistant"),
-                      QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_I), [this] { toggleAiSidebar(); });
+                      QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Y), [this] { toggleAiSidebar(); });
     m_actions->define(QStringLiteral("page.reader"), tr("Reader mode"), {},
                       [this] { showReader(); });
     m_actions->define(QStringLiteral("page.translate"), tr("Translate page…"), {},
@@ -524,6 +542,7 @@ BrowserWindow::BrowserWindow(Browser *browser, QWidget *parent)
     applyUILayout();
 
     m_toast = new Toast(this);
+    m_focusPill = new FocusPill(this);
 
     if (m_browser) {
         connect(m_browser->downloads(), &DownloadManager::finished, this,
@@ -537,6 +556,30 @@ BrowserWindow::BrowserWindow(Browser *browser, QWidget *parent)
             } else if (record.state == QLatin1String("failed")) {
                 notify(tr("Download failed: %1").arg(record.fileName), QStringLiteral("error"));
             }
+        });
+        FocusController *focus = m_browser->focus();
+        connect(focus, &FocusController::started, this, [this] { applyFocusChrome(true); });
+        connect(focus, &FocusController::stopped, this, [this](bool completed) {
+            applyFocusChrome(false);
+            if (completed && isActiveWindow()) {
+                notify(tr("Focus session finished. Well done!"), QStringLiteral("success"));
+            }
+        });
+        connect(focus, &FocusController::tick, this, [this](qint64 remaining) {
+            m_focusPill->setRemaining(Focus::formatRemaining(remaining));
+        });
+        connect(m_focusPill, &FocusPill::endRequested, focus, &FocusController::stop);
+        if (focus->isActive()) {
+            applyFocusChrome(true);
+        }
+        connect(m_browser->performance(), &PerformanceMonitor::memoryWarning, this,
+                [this](qint64 used, qint64 limit) {
+            if (!isActiveWindow()) {
+                return;
+            }
+            notify(tr("Cosmic is using %1 (limit %2). Open the Performance Center to suspend tabs.")
+                       .arg(QLocale().formattedDataSize(used), QLocale().formattedDataSize(limit)),
+                   QStringLiteral("warning"));
         });
         connect(m_browser->downloads(), &DownloadManager::requested, this,
                 [this](QWebEngineDownloadRequest *request) {
@@ -819,6 +862,33 @@ void BrowserWindow::openWorkspace(const SessionWindow &state)
     }
     updateGroupStrip();
     statusBar()->showMessage(tr("Workspace opened; existing tabs were kept."), 5000);
+}
+
+QStringList BrowserWindow::workspaceNames() const
+{
+    QMap<QString, QList<SessionWindow>> workspaces;
+    if (!readWorkspaces(m_userId, &workspaces)) {
+        return {};
+    }
+    QStringList names;
+    for (auto it = workspaces.cbegin(); it != workspaces.cend(); ++it) {
+        if (it.value().size() == 1 && !it.value().first().tabs.isEmpty()) {
+            names.append(it.key());
+        }
+    }
+    return names;
+}
+
+void BrowserWindow::applyFocusWorkspace(const QString &name)
+{
+    if (name.isEmpty()) {
+        return;
+    }
+    QMap<QString, QList<SessionWindow>> workspaces;
+    if (readWorkspaces(m_userId, &workspaces) && workspaces.value(name).size() == 1
+        && !workspaces.value(name).first().tabs.isEmpty()) {
+        openWorkspace(workspaces.value(name).first());
+    }
 }
 
 void BrowserWindow::showTabSearch()
@@ -2144,14 +2214,21 @@ void BrowserWindow::handleFeaturePermissionAsk(WebPage *page, const QUrl &origin
         page->setFeaturePermission(origin, feature, QWebEnginePage::PermissionDeniedByUser);
         return;
     }
-    const QMessageBox::StandardButton answer = QMessageBox::question(
-        this, tr("Permission requested"),
+    QMessageBox box(QMessageBox::Question, tr("Permission requested"),
         tr("The site \"%1\" wants to %2. Allow it?").arg(origin.host(), what),
-        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        QMessageBox::Yes | QMessageBox::No, this);
+    box.setDefaultButton(QMessageBox::No);
+    auto *remember = new QCheckBox(tr("Remember my choice for %1").arg(origin.host()), &box);
+    box.setCheckBox(remember);
+    const bool allowed = box.exec() == QMessageBox::Yes;
+    if (remember->isChecked() && m_browser && !origin.host().isEmpty()) {
+        m_browser->setSitePermission(origin.host(), key,
+                                     allowed ? QStringLiteral("allow") : QStringLiteral("block"));
+    }
     page->setFeaturePermission(
         origin, feature,
-        answer == QMessageBox::Yes ? QWebEnginePage::PermissionGrantedByUser
-                                   : QWebEnginePage::PermissionDeniedByUser);
+        allowed ? QWebEnginePage::PermissionGrantedByUser
+                : QWebEnginePage::PermissionDeniedByUser);
 }
 
 void BrowserWindow::wireTab(TabContent *content)
@@ -2548,6 +2625,7 @@ void BrowserWindow::showSiteInfo()
     menu.addAction(tr("Privacy settings…"), this,
                    [this] { openSettingsTab(QStringLiteral("privacy")); });
     menu.addAction(m_actions->action(QStringLiteral("radar.open")));
+    menu.addAction(m_actions->action(QStringLiteral("privacy.dashboard")));
     menu.exec(QCursor::pos());
 }
 
@@ -2915,24 +2993,9 @@ void BrowserWindow::applyTabPosition()
 
 void BrowserWindow::discardBackgroundTabs()
 {
-    TabContent *current = currentTab();
     int discarded = 0;
     for (int i = 0; i < m_tabs->count(); ++i) {
-        TabContent *tab = tabAt(i);
-        if (!tab || tab == current || tab->isShowingNewTab() || tab->isShowingCrash()) {
-            continue;
-        }
-        WebPage *page = tab->webView()->webPage();
-        if (page->isLoading()) {
-            continue;
-        }
-        const QUrl url = page->url();
-        if (url.scheme() != QLatin1String("http")
-            && url.scheme() != QLatin1String("https")) {
-            continue;
-        }
-        if (page->lifecycleState() != QWebEnginePage::LifecycleState::Discarded) {
-            page->setLifecycleState(QWebEnginePage::LifecycleState::Discarded);
+        if (suspendTab(i)) {
             ++discarded;
         }
     }

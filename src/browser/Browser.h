@@ -18,6 +18,8 @@ class Notes;
 class PasswordVault;
 class DownloadManager;
 class AiService;
+class PerformanceMonitor;
+class FocusController;
 class QWebEngineProfile;
 
 /// Application-level orchestration: creates windows through an injected
@@ -54,6 +56,8 @@ public:
     PasswordVault *passwordVault() const { return m_vault.get(); }
     DownloadManager *downloads() const { return m_downloads.get(); }
     AiService *ai() const { return m_ai.get(); }
+    PerformanceMonitor *performance() const { return m_performance.get(); }
+    FocusController *focus() const { return m_focus.get(); }
 
     /// Attached to every web profile; never null.
     BlocklistInterceptor *requestInterceptor() const { return m_interceptor; }
@@ -92,6 +96,14 @@ public:
     bool loadUiConfiguration();
     bool saveUiConfiguration(const UIConfiguration &cfg);
 
+    /// Every WebEngine profile in use (default + users).
+    QList<QWebEngineProfile *> allProfiles();
+
+    /// Remembered per-site permission decisions ("host|feature" → policy).
+    QHash<QString, QString> sitePermissions() const { return m_pagePolicy.sites; }
+    /// policy "allow"/"block" remembers; "" forgets.
+    void setSitePermission(const QString &host, const QString &feature, const QString &policy);
+
     /// Deletes all cookies and the HTTP cache of every profile
     /// (main + users). Used by Settings → Privacy → Clear now.
     void clearBrowsingData();
@@ -108,6 +120,8 @@ private:
     std::unique_ptr<PasswordVault> m_vault;
     std::unique_ptr<DownloadManager> m_downloads;
     std::unique_ptr<AiService> m_ai;
+    std::unique_ptr<PerformanceMonitor> m_performance;
+    std::unique_ptr<FocusController> m_focus;
     BlocklistInterceptor *m_interceptor = nullptr; // owned by the default profile
     QHash<QString, QWebEngineProfile *> m_profiles; // user id → profile
     PagePolicy m_pagePolicy;
