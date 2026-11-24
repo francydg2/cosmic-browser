@@ -53,13 +53,15 @@ unit-tested with a stub `AppWindow`, and `ui/` stays invisible to
 
 Each WebEngine profile forwards download requests to the browser's
 `DownloadManager`. The user chooses a destination before a transfer is
-accepted. The toolbar button and Ctrl+J open a session-only list showing
-progress, failures and cancellation, with explicit actions to open a
-completed file or its folder. Download history is not persisted.
-The downloads window shows transfer progress and offers resume when WebEngine
-reports an interrupted download as resumable. It also makes up to two
-automatic resume attempts. Recovery depends on WebEngine and the server;
-some interrupted downloads cannot be resumed and must be started again.
+accepted. The toolbar button and Ctrl+J open the Download Center, which shows
+transfer progress, speed and remaining time, offers pause, resume and cancel,
+and has explicit actions to open a completed file or its folder. Finished transfers are kept in
+`downloads.json` (`core/DownloadHistory`, capped at 500 entries, atomic
+writes); the dialog merges live requests with saved records and supports
+search and state filters. WebEngine reports interrupted downloads as
+resumable only sometimes: Cosmic makes up to two automatic resume attempts
+and otherwise records the download as failed. Recovery depends on WebEngine
+and the server.
 
 ## Updates
 

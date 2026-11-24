@@ -65,6 +65,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -274,6 +275,7 @@ class CosmicComposeActivity : ComponentActivity() {
     override fun onDestroy() {
         updates?.close()
         updates = null
+        downloadCenter.close()
         browser?.dispose()
         browser = null
         super.onDestroy()
@@ -323,7 +325,23 @@ class CosmicComposeActivity : ComponentActivity() {
         }
     }
 
+    private val notificationPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
+
+    /** Asks once (Android 13+) so a finished download can show a system notification. */
+    private fun askNotificationPermissionOnce() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val prefs = getSharedPreferences("cosmic_prefs", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("asked_notifications", false) ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        ) return
+        prefs.edit().putBoolean("asked_notifications", true).apply()
+        notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
     private fun requestDownload(info: DownloadInfo) {
+        askNotificationPermissionOnce()
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
             checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
             PackageManager.PERMISSION_GRANTED
@@ -1538,40 +1556,118 @@ private fun EmptyMessage(message: String) {
 @Composable
 private fun DownloadsScreen(center: DownloadCenter, modifier: Modifier) {
     val context = LocalContext.current
-    if (center.items.isEmpty()) {
-        Box(modifier) { EmptyMessage("Nessun download.") }
-        return
-    }
-    LazyColumn(
-        modifier = modifier,
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        items(center.items.toList(), key = { it.id }) { item ->
-            val state = when (item.state) {
-                DownloadState.DONE -> "Completato · Download"
-                DownloadState.FAILED -> "Non riuscito: ${item.error}"
-                DownloadState.RUNNING ->
-                    if (item.total > 0) "In corso · ${item.done * 100 / item.total}%" else "In corso"
+    var query by remember { mutableStateOf("") }
+    var filter by remember { mutableStateOf(DownloadFilter.ALL) }
+    // Re-read speeds and sizes while anything is running.
+    val visible = center.items.filter { filter.accepts(it.state) && matchesQuery(it.name, it.url, query) }
+    Column(modifier) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            singleLine = true,
+            label = { Text("Cerca nei download") }
+        )
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            DownloadFilter.entries.forEach { option ->
+                FilterChip(
+                    selected = filter == option,
+                    onClick = { filter = option },
+                    label = { Text(option.label) }
+                )
             }
-            PageRow(
-                item.name, state,
-                onOpen = {
-                    val uri = item.uri
-                    if (item.state == DownloadState.DONE && uri != null) {
-                        try {
-                            context.startActivity(Intent(Intent.ACTION_VIEW).apply {
-                                setDataAndType(uri, item.mime ?: "*/*")
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            })
-                        } catch (_: Exception) {
-                            Toast.makeText(context, "Impossibile aprire il file", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                },
-                onRemove = { center.remove(item) }
-            )
+            Spacer(Modifier.weight(1f))
+            if (center.items.any { it.state != DownloadState.RUNNING }) {
+                TextButton(onClick = center::clearFinished) { Text("Svuota") }
+            }
         }
+        if (visible.isEmpty()) {
+            EmptyMessage(
+                if (center.items.isEmpty()) "Nessun download. I file scaricati compaiono qui."
+                else "Nessun download corrisponde alla ricerca."
+            )
+            return@Column
+        }
+        LazyColumn(
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(visible, key = { it.id }) { item -> DownloadRow(item, center, context) }
+        }
+    }
+}
+
+@Composable
+private fun DownloadRow(item: DownloadEntry, center: DownloadCenter, context: Context) {
+    val status = when (item.state) {
+        DownloadState.DONE -> "Completato" + if (item.total > 0) " · ${formatSize(item.total)}" else ""
+        DownloadState.FAILED -> "Non riuscito: ${item.error}"
+        DownloadState.CANCELLED -> "Annullato"
+        DownloadState.RUNNING -> buildString {
+            append(if (item.total > 0) "${item.done * 100 / item.total}% · ${formatSize(item.done)} di ${formatSize(item.total)}"
+                   else "${formatSize(item.done)} ricevuti")
+            val speed = formatSpeed(item.speed)
+            if (speed.isNotEmpty()) append(" · $speed")
+            if (item.remaining >= 0) append(" · ${formatDuration(item.remaining)}")
+        }
+    }
+    Card(colors = CardDefaults.cardColors(containerColor = CosmicCard)) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(item.name, color = CosmicText, fontWeight = FontWeight.SemiBold, maxLines = 2)
+            Text(status, color = if (item.state == DownloadState.FAILED) Color(0xFFE5584F) else CosmicMuted,
+                fontSize = 12.sp)
+            if (item.state == DownloadState.RUNNING) {
+                if (item.total > 0) {
+                    LinearProgressIndicator(
+                        progress = { (item.done.toFloat() / item.total).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                when (item.state) {
+                    DownloadState.RUNNING ->
+                        TextButton(onClick = { center.cancel(item) }) { Text("Annulla") }
+                    DownloadState.DONE -> {
+                        TextButton(onClick = { openDownload(context, item) }) { Text("Apri") }
+                        TextButton(onClick = { openDownloadsFolder(context) }) { Text("Cartella") }
+                        TextButton(onClick = { center.remove(item) }) { Text("Rimuovi") }
+                    }
+                    else -> {
+                        TextButton(onClick = { center.retry(item) }) { Text("Riprova") }
+                        TextButton(onClick = { center.remove(item) }) { Text("Rimuovi") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun openDownload(context: Context, item: DownloadEntry) {
+    val uri = item.uri ?: return
+    try {
+        context.startActivity(Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, item.mime ?: "*/*")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        })
+    } catch (_: Exception) {
+        Toast.makeText(context, "Impossibile aprire il file: potrebbe essere stato spostato o eliminato",
+            Toast.LENGTH_SHORT).show()
+    }
+}
+
+private fun openDownloadsFolder(context: Context) {
+    try {
+        context.startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    } catch (_: Exception) {
+        Toast.makeText(context, "Nessuna app disponibile per aprire la cartella Download",
+            Toast.LENGTH_SHORT).show()
     }
 }
 

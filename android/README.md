@@ -22,6 +22,8 @@ not yet available. The Compose preview has not yet been verified on a device.
 Settings use the desktop categories and explain which desktop options are not
 yet supported on Android.
 
+The Download Center (menu → Download) lists active and finished downloads with progress, speed and time left, search and filters, and keeps a history across restarts. Active downloads can be cancelled; a failed or cancelled one can be restarted (resuming a partial file is not supported). Downloads run only while Cosmic is open. On Android 13+ Cosmic asks once for permission to show a notification when a download finishes. The other Cosmic 0.2.0 desktop tools (AI assistant, tab manager, translator, privacy dashboard, performance centre, inspector, Focus) are not available on Android yet.
+
 Add the **Ricerca Cosmic** widget from the Android home screen's widget picker.
 Tapping it opens Cosmic and focuses the address bar; searches use the selected
 search engine.

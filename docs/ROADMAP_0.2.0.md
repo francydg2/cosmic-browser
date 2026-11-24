@@ -1,5 +1,7 @@
 # Roadmap 0.2.0
 
+Status: items 1–11 were implemented on the desktop in this branch; see `FEATURE_STATUS.md` for what is partial. The release itself is not published.
+
 Order follows dependencies: shared building blocks first, then the features that use them.
 
 | # | Work item | Depends on | Notes |
