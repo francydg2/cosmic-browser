@@ -1,4 +1,5 @@
 #include "browser/Browser.h"
+#include "browser/AiService.h"
 #include "browser/DownloadManager.h"
 #include "core/Bookmarks.h"
 #include "core/Notes.h"
@@ -43,7 +44,11 @@ Browser::Browser()
     m_notes->load();
     m_vault = std::make_unique<PasswordVault>(
         Paths::configDir() + QLatin1Char('/') + kVaultFileName);
-    m_downloads = std::make_unique<DownloadManager>();
+    m_downloads = std::make_unique<DownloadManager>(
+        Paths::dataDir() + QStringLiteral("/downloads.json"));
+    m_ai = std::make_unique<AiService>(
+        m_settings.get(), m_vault.get(),
+        Paths::dataDir() + QStringLiteral("/ai-conversations.json"));
     m_uiConfig = UiLayout::defaultConfiguration();
     loadUiConfiguration();
 

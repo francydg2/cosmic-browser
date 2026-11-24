@@ -22,6 +22,8 @@ const auto kKeyAccent = "appearance.accent";
 const auto kKeyTabPosition = "tabs.position";
 const auto kKeyRamSaver = "performance.ramSaver";
 
+const char *const kSections[] = {"ai", "translation", "focus", "performance"};
+
 const auto kDefaultEngine = "duckduckgo";
 const auto kDefaultAccent = "#7c6cf0";
 const auto kPolicyAsk = "ask";
@@ -48,6 +50,33 @@ Settings::Settings(const QString &filePath, QObject *parent)
     m_data.insert(QString::fromLatin1(kKeyAccent), QString::fromLatin1(kDefaultAccent));
     m_data.insert(QString::fromLatin1(kKeyTabPosition), QString::fromLatin1(kPositionHorizontal));
     m_data.insert(QString::fromLatin1(kKeyRamSaver), false);
+    for (const char *name : kSections) {
+        m_data.insert(QString::fromLatin1(name), QJsonObject());
+    }
+}
+
+QJsonObject Settings::section(const QString &name) const
+{
+    for (const char *known : kSections) {
+        if (name == QLatin1String(known)) {
+            return m_data.value(name).toObject();
+        }
+    }
+    return {};
+}
+
+void Settings::setSection(const QString &name, const QJsonObject &values)
+{
+    for (const char *known : kSections) {
+        if (name == QLatin1String(known)) {
+            if (m_data.value(name).toObject() == values) {
+                return;
+            }
+            m_data.insert(name, values);
+            emit sectionChanged(name);
+            return;
+        }
+    }
 }
 
 bool Settings::load()

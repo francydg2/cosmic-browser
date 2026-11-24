@@ -13,6 +13,7 @@
 #include "ui/DownloadsDialog.h"
 #include "ui/NotesDialog.h"
 #include "ui/TrackerRadarDialog.h"
+#include "ui/Toast.h"
 #include "ui/NewTabPage.h"
 #include "ui/SettingsForm.h"
 #include "ui/Style.h"
@@ -379,10 +380,14 @@ BrowserWindow::BrowserWindow(Browser *browser, QWidget *parent)
                       [this] { showTabSearch(); });
     m_actions->define(QStringLiteral("workspaces.open"), tr("Saved workspaces…"), {},
                       [this] { showWorkspaces(); });
+    m_actions->define(QStringLiteral("ai.assistant"), tr("Cosmic AI Assistant"),
+                      QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_I), [this] { toggleAiSidebar(); });
     m_actions->define(QStringLiteral("page.reader"), tr("Reader mode"), {},
                       [this] { showReader(); });
     m_actions->define(QStringLiteral("page.translate"), tr("Translate page…"), {},
                       [this] { translateCurrentPage(); });
+    m_actions->define(QStringLiteral("page.translateSelection"), tr("Translate selected text…"), {},
+                      [this] { translateSelection(); });
     m_actions->define(QStringLiteral("page.qr"), tr("QR code for page"), {},
                       [this] { showPageQrCode(); });
     m_actions->define(QStringLiteral("view.split"), tr("Toggle split view"),
@@ -518,7 +523,21 @@ BrowserWindow::BrowserWindow(Browser *browser, QWidget *parent)
 
     applyUILayout();
 
+    m_toast = new Toast(this);
+
     if (m_browser) {
+        connect(m_browser->downloads(), &DownloadManager::finished, this,
+                [this](const DownloadRecord &record) {
+            const QWidget *active = QApplication::activeWindow();
+            if (active ? active != this : allWindows().isEmpty() || allWindows().first() != this) {
+                return;
+            }
+            if (record.state == QLatin1String("completed")) {
+                notify(tr("Download completed: %1").arg(record.fileName), QStringLiteral("success"));
+            } else if (record.state == QLatin1String("failed")) {
+                notify(tr("Download failed: %1").arg(record.fileName), QStringLiteral("error"));
+            }
+        });
         connect(m_browser->downloads(), &DownloadManager::requested, this,
                 [this](QWebEngineDownloadRequest *request) {
             if (!request) {
@@ -596,6 +615,13 @@ BrowserWindow::BrowserWindow(Browser *browser, QWidget *parent)
     applyTabPosition();
     resize(1280, 800);
     updateChrome();
+}
+
+void BrowserWindow::notify(const QString &message, const QString &kind)
+{
+    if (m_toast) {
+        m_toast->showMessage(message, kind);
+    }
 }
 
 void BrowserWindow::showDownloads()
@@ -969,7 +995,7 @@ void BrowserWindow::showReader()
         });
 }
 
-void BrowserWindow::translateCurrentPage()
+void BrowserWindow::translateWithGoogle()
 {
     TabContent *tab = focusedTab();
     if (!tab || tab->isShowingNewTab() || tab->isShowingCrash()) {
@@ -2132,6 +2158,11 @@ void BrowserWindow::wireTab(TabContent *content)
 {
     WebPage *page = content->webView()->webPage();
     page->settings()->setAttribute(QWebEngineSettings::FullScreenSupportEnabled, true);
+    connect(page, &QWebEnginePage::loadFinished, this, [this, page](bool ok) {
+        if (ok) {
+            maybeAutoTranslate(page);
+        }
+    });
     connect(page, &QWebEnginePage::fullScreenRequested, this,
             [this, content, page](QWebEngineFullScreenRequest request) {
         if (request.toggleOn()) {
@@ -2601,6 +2632,8 @@ void BrowserWindow::applyUILayout()
     toolsButton->setToolTip(tr("Page tools"));
     toolsButton->setPopupMode(QToolButton::InstantPopup);
     auto *toolsMenu = new QMenu(toolsButton);
+    buildToolsMenuEntries(toolsMenu);
+    toolsMenu->addSeparator();
     toolsMenu->addAction(m_actions->action(QStringLiteral("tabs.search")));
     auto *workspacesMenu = toolsMenu->addMenu(tr("Saved workspaces"));
     workspacesMenu->setObjectName(QStringLiteral("workspacesMenu"));
@@ -2628,6 +2661,7 @@ void BrowserWindow::applyUILayout()
     });
     toolsMenu->addAction(m_actions->action(QStringLiteral("page.reader")));
     toolsMenu->addAction(m_actions->action(QStringLiteral("page.translate")));
+    toolsMenu->addAction(m_actions->action(QStringLiteral("page.translateSelection")));
     toolsMenu->addAction(m_actions->action(QStringLiteral("page.qr")));
     toolsMenu->addAction(m_actions->action(QStringLiteral("view.split")));
     toolsButton->setMenu(toolsMenu);
@@ -2843,6 +2877,9 @@ void BrowserWindow::buildBookmarksMenu()
 void BrowserWindow::buildAiMenu()
 {
     auto *menu = new QMenu(m_aiButton);
+    menu->addAction(m_actions->action(QStringLiteral("ai.assistant")));
+    menu->addSeparator();
+    menu->addSection(tr("Open in the browser"));
     menu->addAction(m_actions->action(QStringLiteral("ai.open.chatgpt")));
     menu->addAction(m_actions->action(QStringLiteral("ai.open.claude")));
     menu->addAction(m_actions->action(QStringLiteral("ai.open.gemini")));

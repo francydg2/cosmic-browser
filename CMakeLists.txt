@@ -94,6 +94,16 @@ add_library(cosmic_core STATIC
     src/core/Settings.cpp
     src/core/SearchEngines.h
     src/core/SearchEngines.cpp
+    src/core/DownloadHistory.h
+    src/core/DownloadHistory.cpp
+    src/core/AiConversations.h
+    src/core/AiConversations.cpp
+    src/core/AiPrompt.h
+    src/core/AiPrompt.cpp
+    src/core/AiProvider.h
+    src/core/Translator.h
+    src/core/Translator.cpp
+    src/core/AiProvider.cpp
     src/core/Session.h
     src/core/Session.cpp
     src/core/UserCatalog.h
@@ -123,6 +133,10 @@ add_library(cosmic_core STATIC
     src/browser/UpdateAsset.cpp
     src/browser/UpdateDownload.h
     src/browser/UpdateDownload.cpp
+    src/browser/AiClient.h
+    src/browser/AiService.h
+    src/browser/AiService.cpp
+    src/browser/AiClient.cpp
     src/browser/Browser.h
     src/browser/Browser.cpp
     src/browser/SingleInstance.h
@@ -153,6 +167,14 @@ add_library(cosmic_core STATIC
     src/ui/customizer/CustomizerWindow.cpp
     src/ui/NameColorDialog.h
     src/ui/NameColorDialog.cpp
+    src/ui/AiSidebar.h
+    src/ui/AiSidebar.cpp
+    src/ui/AiSettingsDialog.h
+    src/ui/AiSettingsDialog.cpp
+    src/ui/PageTranslator.h
+    src/ui/PageTranslator.cpp
+    src/ui/Toast.h
+    src/ui/Toast.cpp
     src/ui/DownloadsDialog.h
     src/ui/DownloadsDialog.cpp
     src/ui/NotesDialog.h
@@ -161,6 +183,7 @@ add_library(cosmic_core STATIC
     src/ui/TrackerRadarDialog.cpp
     src/ui/BrowserWindow.h
     src/ui/BrowserWindow.cpp
+    src/ui/BrowserWindowTools.cpp
 )
 
 target_include_directories(cosmic_core PUBLIC src PRIVATE ${qrcodegen_SOURCE_DIR}/cpp)

@@ -1113,7 +1113,9 @@ void SettingsForm::refreshVaultWidgets()
         return;
     }
 
-    const QVector<VaultEntry> entries = m_vault->entries();
+    QVector<VaultEntry> entries = m_vault->entries();
+    // API keys of the AI assistant live in the vault but are not passwords.
+    entries.removeIf([](const VaultEntry &e) { return e.type == QLatin1String("ai-key"); });
     m_vaultStatusLabel->setText(
         tr("Unlocked — %1 entr%2 in %3.")
             .arg(entries.size())

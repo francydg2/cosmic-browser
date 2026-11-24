@@ -17,6 +17,7 @@ class Bookmarks;
 class Notes;
 class PasswordVault;
 class DownloadManager;
+class AiService;
 class QWebEngineProfile;
 
 /// Application-level orchestration: creates windows through an injected
@@ -52,6 +53,7 @@ public:
     /// (created on first use from Settings → Passwords).
     PasswordVault *passwordVault() const { return m_vault.get(); }
     DownloadManager *downloads() const { return m_downloads.get(); }
+    AiService *ai() const { return m_ai.get(); }
 
     /// Attached to every web profile; never null.
     BlocklistInterceptor *requestInterceptor() const { return m_interceptor; }
@@ -105,6 +107,7 @@ private:
     std::unique_ptr<Notes> m_notes;
     std::unique_ptr<PasswordVault> m_vault;
     std::unique_ptr<DownloadManager> m_downloads;
+    std::unique_ptr<AiService> m_ai;
     BlocklistInterceptor *m_interceptor = nullptr; // owned by the default profile
     QHash<QString, QWebEngineProfile *> m_profiles; // user id → profile
     PagePolicy m_pagePolicy;

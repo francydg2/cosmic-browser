@@ -1,6 +1,7 @@
 #pragma once
 
 #include "browser/AppWindow.h"
+#include "core/AiPrompt.h"
 #include "core/Session.h"
 #include "ui/TabContent.h"
 #include "web/WebPage.h"
@@ -10,6 +11,7 @@
 #include <QPointer>
 #include <QStringList>
 #include <QVector>
+#include <functional>
 #include <vector>
 
 class Browser;
@@ -20,6 +22,10 @@ class SettingsForm;
 class DownloadsDialog;
 class NotesDialog;
 class TrackerRadarDialog;
+class Toast;
+class AiSidebar;
+class PageTranslator;
+class QDockWidget;
 class QTabWidget;
 class QProgressBar;
 class QDialog;
@@ -68,6 +74,11 @@ public:
     TabContent *currentTab() const;
     int tabCount() const;
     QString userId() const override { return m_userId; }
+    Toast *toast() const { return m_toast; }
+
+    /// Shows a transient notification in this window (kind: info,
+    /// success, warning, error).
+    void notify(const QString &message, const QString &kind = QStringLiteral("info"));
 
     /// Rebuilds the toolbar from Browser::uiConfiguration() (customizer).
     void applyUILayout();
@@ -114,10 +125,20 @@ private:
     void showNotes();
     void showTrackerRadar();
     void showTabSearch();
+
+    // Cosmic 0.2.0 tools (implemented in BrowserWindowTools.cpp)
+    void toggleAiSidebar();
+    void fetchPageContext(TabContent *tab, std::function<void(Ai::PageContext)> done);
+    void buildToolsMenuEntries(QMenu *menu);
     void showWorkspaces();
     void openWorkspace(const SessionWindow &state);
     void showReader();
     void translateCurrentPage();
+    void translateWithGoogle();
+    void translateSelection();
+    void maybeAutoTranslate(WebPage *page);
+    void updateTranslationIndicator();
+    PageTranslator *translator();
     void showPageQrCode();
     void toggleSplitView();
     void closeSplitView();
@@ -184,6 +205,11 @@ private:
     QPointer<NotesDialog> m_notesDialog;
     QPointer<TrackerRadarDialog> m_trackerRadarDialog;
     QPointer<QDialog> m_tabSearchDialog;
+    Toast *m_toast = nullptr;
+    QPointer<QDockWidget> m_aiDock;
+    AiSidebar *m_aiSidebar = nullptr;
+    PageTranslator *m_translator = nullptr;
+    QToolButton *m_translateIndicator = nullptr;
     QPointer<WebPage> m_fullScreenPage;
     QShortcut *m_exitFullScreenShortcut = nullptr;
     Qt::WindowStates m_beforeFullScreenState;

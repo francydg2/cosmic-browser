@@ -148,3 +148,19 @@ if(DESKTOP_FILE_VALIDATE)
         COMMAND ${DESKTOP_FILE_VALIDATE} ${CMAKE_BINARY_DIR}/resources/cosmic.desktop
     )
 endif()
+
+add_executable(cosmic_test_downloadhistory test_downloadhistory.cpp)
+target_include_directories(cosmic_test_downloadhistory PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(cosmic_test_downloadhistory PRIVATE cosmic_core Qt6::Test)
+add_test(NAME downloadhistory COMMAND cosmic_test_downloadhistory)
+
+add_executable(cosmic_test_ai test_ai.cpp)
+target_include_directories(cosmic_test_ai PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(cosmic_test_ai PRIVATE cosmic_core Qt6::Test)
+add_test(NAME ai COMMAND cosmic_test_ai)
+set_tests_properties(ai PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
+add_executable(cosmic_test_translator test_translator.cpp)
+target_include_directories(cosmic_test_translator PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(cosmic_test_translator PRIVATE cosmic_core Qt6::Test)
+add_test(NAME translator COMMAND cosmic_test_translator)

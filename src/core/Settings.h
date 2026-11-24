@@ -75,7 +75,14 @@ public:
     bool ramSaverEnabled() const;
     void setRamSaverEnabled(bool enabled);
 
+    /// Free-form sections owned by individual features ("ai",
+    /// "translation", "focus", "performance"). Each feature validates
+    /// its own content; unknown section names are ignored.
+    QJsonObject section(const QString &name) const;
+    void setSection(const QString &name, const QJsonObject &values);
+
 signals:
+    void sectionChanged(const QString &name);
     void defaultSearchEngineChanged(const QString &id);
     void requestBlockingChanged(bool enabled);
     void restoreSessionChanged(bool restore);
