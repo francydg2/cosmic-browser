@@ -2300,6 +2300,7 @@ void BrowserWindow::wireTab(TabContent *content)
         }
         if (content == currentTab()) {
             updateChrome();
+            bindInspector();
         }
     });
     connect(content, &TabContent::inputSubmitted, this, [this, content](const QString &input) {

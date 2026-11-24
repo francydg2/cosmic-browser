@@ -224,6 +224,14 @@ void TestAi::promptTreatsPagesAsData()
     QVERIFY(!last.contains(QLatin1String("</page> and")));     // cannot close the data block
     QVERIFY(last.contains(QStringLiteral("[…text truncated…]")));
     QVERIFY(last.size() < maxCharsPerPage + 1000);
+    // Untitled pages get their address as title: the query must not leak through it.
+    PageContext untitled;
+    untitled.url = QUrl(QStringLiteral("https://example.com/p?token=abc#frag"));
+    untitled.title = QStringLiteral("example.com/p?token=abc#frag");
+    untitled.text = QStringLiteral("body");
+    const QString withUntitled = buildMessages({}, QStringLiteral("q"), {untitled}, QStringLiteral("en")).last().content;
+    QVERIFY(!withUntitled.contains(QLatin1String("token=abc")));
+    QVERIFY(!withUntitled.contains(QLatin1String("frag")));
     // History is replayed without page context.
     QCOMPARE(messages.at(1).content, QStringLiteral("before"));
 }

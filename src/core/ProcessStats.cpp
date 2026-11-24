@@ -1,5 +1,6 @@
 #include "core/ProcessStats.h"
 
+#include <algorithm>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>

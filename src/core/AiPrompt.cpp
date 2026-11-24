@@ -54,7 +54,16 @@ QList<Message> buildMessages(const QList<Message> &history, const QString &quest
             continue;
         }
         budget -= text.size();
+        // Chromium titles untitled pages with their address, query included.
         QString title = page.title;
+        if (page.url.hasQuery()) {
+            for (const QString &query : {page.url.query(QUrl::FullyEncoded), page.url.query(QUrl::FullyDecoded)}) {
+                title.remove(QLatin1Char('?') + query);
+            }
+        }
+        if (page.url.hasFragment()) {
+            title.remove(QLatin1Char('#') + page.url.fragment());
+        }
         title.replace(QLatin1Char('<'), QLatin1Char(' ')).replace(QLatin1Char('>'), QLatin1Char(' '));
         QString body = text;
         body.replace(QStringLiteral("</page"), QStringLiteral("<\\/page"));

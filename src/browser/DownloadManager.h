@@ -31,6 +31,7 @@ public:
     double bytesPerSecond(const QWebEngineDownloadRequest *request) const;
     qint64 secondsRemaining(const QWebEngineDownloadRequest *request) const;
     QList<DownloadRecord> history() const { return m_history.records(); }
+    int historyCount() const { return m_history.count(); }
     void removeRecord(const QString &id);
     void pause(QWebEngineDownloadRequest *request);
 

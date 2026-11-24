@@ -55,4 +55,5 @@ private:
     QPushButton *m_remove;
     QTimer *m_refreshTimer;
     QVector<Row> m_rows;
+    qsizetype m_listSize = -1; // live + saved entries at the last refresh
 };

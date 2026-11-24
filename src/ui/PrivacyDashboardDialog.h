@@ -3,6 +3,7 @@
 #include <QDialog>
 #include <QHash>
 #include <QNetworkCookie>
+#include <QSet>
 
 class Browser;
 class QLabel;
@@ -50,4 +51,5 @@ private:
     QTimer *m_refreshTimer = nullptr;
     QTimer *m_cookieTimer = nullptr;
     QHash<QString, CookieRecord> m_cookies;
+    QSet<QObject *> m_cookieStores;
 };

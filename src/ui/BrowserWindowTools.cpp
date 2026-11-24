@@ -497,25 +497,30 @@ void BrowserWindow::bindInspector()
     if (!m_inspectorView || !m_inspectorDock || !m_inspectorDock->isVisible()) {
         return;
     }
-    if (m_inspectedPage) {
-        m_inspectedPage->setDevToolsPage(nullptr);
-        m_inspectedPage.clear();
-    }
-    QWebEnginePage *old = m_inspectorView->page();
     TabContent *tab = currentTab();
-    if (!tab || tab->isShowingNewTab() || tab->isShowingCrash()) {
+    const bool inspectable = tab && !tab->isShowingNewTab() && !tab->isShowingCrash();
+    WebPage *page = inspectable ? tab->webView()->webPage() : nullptr;
+    if (page && page->devToolsPage() && page->devToolsPage() == m_inspectorView->page()) {
+        return; // already bound
+    }
+    // Engine DevTools pages cannot be detached explicitly: destroying the
+    // DevTools page releases the inspected page.
+    // setPage() deletes a page the view created itself, so guard the old one.
+    QPointer<QWebEnginePage> old(m_inspectorView->page());
+    QWebEngineProfile *profile = page ? page->profile() : QWebEngineProfile::defaultProfile();
+    auto *devtools = new QWebEnginePage(profile, m_inspectorView);
+    m_inspectorView->setPage(devtools);
+    m_inspectedPage.clear();
+    if (old && old != devtools) {
+        old->deleteLater();
+    }
+    if (!page) {
         m_inspectorView->setHtml(tr("<body style='background:#14161d;color:#98a2b2;font:14px sans-serif;"
                                     "padding:24px'>Open a web page to inspect it.</body>"));
         return;
     }
-    WebPage *page = tab->webView()->webPage();
-    auto *devtools = new QWebEnginePage(page->profile(), m_inspectorView);
-    m_inspectorView->setPage(devtools);
     page->setDevToolsPage(devtools);
     m_inspectedPage = page;
-    if (old && old != devtools) {
-        old->deleteLater();
-    }
 }
 
 void BrowserWindow::toggleWebInspector()
@@ -543,9 +548,15 @@ void BrowserWindow::toggleWebInspector()
         connect(m_inspectorDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
             if (visible) {
                 bindInspector();
-            } else if (m_inspectedPage) {
-                m_inspectedPage->setDevToolsPage(nullptr);
+            } else if (m_inspectorView) {
+                // Hidden: drop the DevTools page so nothing is inspected.
+                QPointer<QWebEnginePage> old(m_inspectorView->page());
+                m_inspectorView->setPage(new QWebEnginePage(QWebEngineProfile::defaultProfile(),
+                                                            m_inspectorView));
                 m_inspectedPage.clear();
+                if (old) {
+                    old->deleteLater();
+                }
             }
         });
         connect(m_tabs, &QTabWidget::currentChanged, this, [this] { bindInspector(); });

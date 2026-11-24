@@ -181,3 +181,26 @@ add_executable(cosmic_test_focus test_focus.cpp)
 target_include_directories(cosmic_test_focus PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(cosmic_test_focus PRIVATE cosmic_core Qt6::Test)
 add_test(NAME focus COMMAND cosmic_test_focus)
+
+# 9) Cosmic 0.2.0 tools: AI assistant, translator, tab manager, privacy
+#    dashboard, performance centre, inspector, Focus, download centre.
+add_executable(cosmic_test_tools test_tools.cpp)
+target_include_directories(cosmic_test_tools PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(cosmic_test_tools PRIVATE cosmic_core Qt6::Test)
+qt_add_resources(cosmic_test_tools "cosmic_res_tools"
+    PREFIX "/"
+    BASE ${CMAKE_SOURCE_DIR}/resources
+    FILES ${NEBULA_TEST_RES_FILES}
+)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test(NAME tools COMMAND ${CMAKE_COMMAND}
+        "-DTEST_EXECUTABLE=$<TARGET_FILE:cosmic_test_tools>"
+        "-DTEST_LOG=${CMAKE_CURRENT_BINARY_DIR}/tools.log"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/run_browser_window.cmake")
+else()
+    add_test(NAME tools COMMAND cosmic_test_tools)
+endif()
+set_tests_properties(tools PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    TIMEOUT 240
+)

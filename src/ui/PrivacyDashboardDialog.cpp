@@ -5,6 +5,7 @@
 #include "ui/TrackerRadarDialog.h"
 #include "web/BlocklistInterceptor.h"
 
+#include <algorithm>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFormLayout>
@@ -105,6 +106,8 @@ PrivacyDashboardDialog::PrivacyDashboardDialog(Browser *browser, QWidget *parent
     m_cookieTimer->setSingleShot(true);
     m_cookieTimer->setInterval(400);
     connect(m_cookieTimer, &QTimer::timeout, this, &PrivacyDashboardDialog::renderCookies);
+    connect(m_browser->settings(), &Settings::requestBlockingChanged, this,
+            &PrivacyDashboardDialog::refreshOverview);
     connect(m_browser->settings(), &Settings::sectionChanged, this, [this](const QString &name) {
         if (name == QLatin1String("sitePermissions")) {
             refreshPermissions();
@@ -303,6 +306,12 @@ void PrivacyDashboardDialog::scanCookies()
             continue;
         }
         const QPointer<QWebEngineProfile> guard(profile);
+        if (m_cookieStores.contains(store)) {
+            store->loadAllCookies();
+            continue;
+        }
+        m_cookieStores.insert(store);
+        connect(store, &QObject::destroyed, this, [this, store] { m_cookieStores.remove(store); });
         connect(store, &QWebEngineCookieStore::cookieAdded, this,
                 [this, guard](const QNetworkCookie &cookie) {
             if (!guard) {
@@ -313,7 +322,7 @@ void PrivacyDashboardDialog::scanCookies()
                 + QLatin1Char('|') + QString::fromUtf8(cookie.name());
             m_cookies.insert(key, {cookie, guard});
             m_cookieTimer->start();
-        }, Qt::UniqueConnection);
+        });
         connect(store, &QWebEngineCookieStore::cookieRemoved, this,
                 [this, guard](const QNetworkCookie &cookie) {
             const QString key = QString::number(reinterpret_cast<quintptr>(guard.data()))
@@ -322,7 +331,7 @@ void PrivacyDashboardDialog::scanCookies()
             if (m_cookies.remove(key) > 0) {
                 m_cookieTimer->start();
             }
-        }, Qt::UniqueConnection);
+        });
         store->loadAllCookies();
     }
     m_cookieSummary->setText(tr("Reading cookies…"));

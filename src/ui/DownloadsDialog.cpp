@@ -168,7 +168,11 @@ DownloadsDialog::DownloadsDialog(DownloadManager *manager, QWidget *parent)
     m_refreshTimer->setInterval(150);
     connect(m_refreshTimer, &QTimer::timeout, this, &DownloadsDialog::refresh);
     connect(m_manager, &DownloadManager::changed, this, [this] {
-        if (!m_refreshTimer->isActive()) {
+        // Rows added or removed show at once; progress ticks are coalesced.
+        if (m_manager->downloads().size() + m_manager->historyCount() != m_listSize) {
+            m_refreshTimer->stop();
+            refresh();
+        } else if (!m_refreshTimer->isActive()) {
             m_refreshTimer->start();
         }
     });
@@ -276,6 +280,7 @@ void DownloadsDialog::updateButtons()
 
 void DownloadsDialog::refresh()
 {
+    m_listSize = m_manager->downloads().size() + m_manager->historyCount();
     const QString selectedId = selectedRow() ? selectedRow()->id : QString();
     const QString query = m_search->text().trimmed();
     const QString stateFilter = m_filter->currentData().toString();

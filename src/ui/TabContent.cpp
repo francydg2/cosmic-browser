@@ -72,6 +72,13 @@ TabContent::TabContent(WebPageDelegate *delegate, QWebEngineProfile *profile,
 
     connect(m_web->webPage(), &QWebEnginePage::renderProcessTerminated, this,
             [this](QWebEnginePage::RenderProcessTerminationStatus status, int exitCode) {
+                // Discarding a background tab on purpose (RAM Saver, Tab
+                // Manager) ends its renderer normally; that is not a crash.
+                if (status == QWebEnginePage::NormalTerminationStatus
+                    && m_web->webPage()->lifecycleState()
+                        == QWebEnginePage::LifecycleState::Discarded) {
+                    return;
+                }
                 qCWarning(lcCosmic).noquote() << "tab crashed, status" << status
                                               << "exit" << exitCode << "- showing crash page";
                 showCrash();

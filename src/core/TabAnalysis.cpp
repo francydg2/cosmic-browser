@@ -1,5 +1,6 @@
 #include "core/TabAnalysis.h"
 
+#include <algorithm>
 #include <QHash>
 #include <QSet>
 #include <QUrlQuery>

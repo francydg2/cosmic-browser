@@ -35,6 +35,7 @@ public:
     bool save() const;
 
     QList<DownloadRecord> records() const { return m_records; }
+    int count() const { return int(m_records.size()); }
     bool contains(const QString &id) const;
     /// Inserts or replaces by id, keeps newest first and the size cap.
     void upsert(const DownloadRecord &record);

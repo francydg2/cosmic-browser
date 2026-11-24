@@ -1,5 +1,6 @@
 #include "core/Translator.h"
 
+#include <algorithm>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>

@@ -8,6 +8,7 @@
 #include "web/WebPage.h"
 #include "web/WebView.h"
 
+#include <algorithm>
 #include <QCheckBox>
 #include <QDateTime>
 #include <QHBoxLayout>
